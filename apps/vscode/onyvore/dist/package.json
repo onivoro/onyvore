@@ -1,0 +1,62 @@
+{
+  "name": "onyvore",
+  "displayName": "Onyvore",
+  "description": "Local-first personal knowledge management for VS Code",
+  "version": "1.0.0",
+  "publisher": "onivoro",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "categories": [
+    "Notebooks"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/onivoro/onyvore.git"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "onyvore.initializeNotebook",
+        "title": "Onyvore: Initialize Notebook"
+      },
+      {
+        "command": "onyvore.discoverNotebooks",
+        "title": "Onyvore: Discover Notebooks"
+      },
+      {
+        "command": "onyvore.searchNotebook",
+        "title": "Onyvore: Search Notebook"
+      },
+      {
+        "command": "onyvore.rebuildNotebook",
+        "title": "Onyvore: Rebuild Notebook"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "onyvore",
+          "title": "Onyvore",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "onyvore": [
+        {
+          "type": "webview",
+          "id": "onyvore.webview",
+          "name": "Onyvore",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "onyvore:build",
+      "type": "shell",
+      "command": "npx nx build app-vscode-onyvore --skip-nx-cache",
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    }
+  ]
+}

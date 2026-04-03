@@ -1,0 +1,47 @@
+{
+  "name": "app-vscode-onyvore",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/vscode/onyvore/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "@nx/webpack:webpack",
+      "dependsOn": ["app-stdio-onyvore:build", "app-browser-onyvore:build"],
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "target": "node",
+        "compiler": "tsc",
+        "outputPath": "apps/vscode/onyvore/dist",
+        "main": "apps/vscode/onyvore/src/main.ts",
+        "tsConfig": "apps/vscode/onyvore/tsconfig.app.json",
+        "generatePackageJson": false,
+        "assets": [
+          { "input": "apps/vscode/onyvore", "glob": "package.json", "output": "." },
+          { "input": "apps/vscode/onyvore", "glob": "README.md", "output": "." },
+          { "input": "apps/vscode/onyvore", "glob": ".vscodeignore", "output": "." },
+          { "input": "apps/vscode/onyvore/src/assets", "glob": "**/*", "output": "./resources" },
+          { "input": "apps/vscode/onyvore/resources", "glob": "**/*", "output": "./resources" },
+          { "input": "apps/stdio/onyvore/dist", "glob": "main.js", "output": "./server" },
+          { "input": "apps/stdio/onyvore/dist", "glob": "main.js.map", "output": "./server" },
+          { "input": "dist/apps/browser/onyvore", "glob": "**/*", "output": "./webview" }
+        ],
+        "isolatedConfig": true,
+        "sourceMap": true,
+        "webpackConfig": "apps/vscode/onyvore/webpack.config.js"
+      },
+      "configurations": {
+        "development": {},
+        "production": {}
+      }
+    },
+    "package": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["build"],
+      "options": {
+        "command": "cd apps/vscode/onyvore/dist && node -e \"const p=require('./package.json');p.main='./main.js';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2))\" && vsce package --no-dependencies --skip-license -o ../onyvore.vsix --baseContentUrl https://github.com/onivoro/onyvore --baseImagesUrl https://github.com/onivoro/onyvore"
+      }
+    }
+  },
+  "tags": []
+}

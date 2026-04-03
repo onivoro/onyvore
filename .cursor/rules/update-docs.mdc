@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Update the docs folder with relevant information if you change the API interface or add new routes or DB entities.

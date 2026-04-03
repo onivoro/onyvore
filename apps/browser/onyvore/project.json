@@ -1,0 +1,8 @@
+{
+  "name": "app-browser-onyvore",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/browser/onyvore/src",
+  "projectType": "application",
+  "targets": {},
+  "tags": []
+}

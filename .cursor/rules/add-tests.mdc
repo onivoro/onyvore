@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+When making a change, add unit or API tests wherever appropriate. But do NOT make fragile tests that assert arbitrary things like the position of a button or something. The tests should fail when something goes seriously wrong and the app is broken, not when small and working changes are made.

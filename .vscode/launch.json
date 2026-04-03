@@ -1,0 +1,20 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Onyvore Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode/onyvore",
+        "--disable-extensions",
+        "--user-data-dir=${workspaceFolder}/_tmp/.vscode-test-data"
+      ],
+      "outFiles": ["${workspaceFolder}/apps/vscode/onyvore/dist/**/*.js"],
+      "preLaunchTask": "onyvore:build"
+    }
+  ]
+}

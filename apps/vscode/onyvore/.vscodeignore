@@ -1,0 +1,6 @@
+src/**
+*.ts
+webpack.config.js
+tsconfig*.json
+node_modules/**
+.vscode/**

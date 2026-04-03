@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+All tests, however they are written, must never insert new data into the database. They should simply exercise the UI or endpoints in a way that confirms they work but is agnostic to the state of the database.

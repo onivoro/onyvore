@@ -1,0 +1,17 @@
+{
+  "name": "lib-isomorphic-onyvore",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/isomorphic/onyvore/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "@nx/vite:build",
+      "generatePackageJson": true,
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/isomorphic/onyvore"
+      }
+    }
+  },
+  "tags": []
+}

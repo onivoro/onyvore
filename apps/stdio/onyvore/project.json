@@ -1,0 +1,29 @@
+{
+  "name": "app-stdio-onyvore",
+  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/stdio/onyvore/src",
+  "projectType": "application",
+  "targets": {
+    "build": {
+      "executor": "@nx/webpack:webpack",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "target": "node",
+        "compiler": "tsc",
+        "outputPath": "apps/stdio/onyvore/dist",
+        "main": "apps/stdio/onyvore/src/main.ts",
+        "tsConfig": "apps/stdio/onyvore/tsconfig.app.json",
+        "generatePackageJson": false,
+        "isolatedConfig": true,
+        "sourceMap": true,
+        "webpackConfig": "apps/stdio/onyvore/webpack.config.js"
+      },
+      "configurations": {
+        "development": {},
+        "production": {}
+      }
+    }
+  },
+  "tags": []
+}

@@ -1,0 +1,46 @@
+1. Store the PAT as a GitHub secret                                                                                                                           
+   
+  In your repo → Settings → Secrets and variables → Actions → add:                                                                                              
+  - VSCE_PAT — your Personal Access Token from Azure DevOps 
+                                                                                                                                                                
+  2. Create the workflow                                    
+                                                                                                                                                                
+  # .github/workflows/publish-onyvore.yml                   
+  name: Publish Onyvore                                                                                                                                         
+  
+  on:                                                                                                                                                           
+    push:                                                   
+      tags:
+        - 'onyvore-v*'  # trigger on tags like onyvore-v1.0.1
+                                                                                                                                                                
+  jobs:
+    publish:                                                                                                                                                    
+      runs-on: ubuntu-latest                                                                                                                                    
+      steps:
+        - uses: actions/checkout@v4                                                                                                                             
+                                                            
+        - uses: actions/setup-node@v4
+          with:
+            node-version: 20
+            cache: npm                                                                                                                                          
+  
+        - run: npm ci                                                                                                                                           
+                                                            
+        - run: npm run onyvore:vsix
+
+        - run: npx vsce publish --packagePath apps/vscode/onyvore/onyvore.vsix                                                                                  
+          env:
+            VSCE_PAT: ${{ secrets.VSCE_PAT }}                                                                                                                   
+                                                            
+  3. Publish                                                                                                                                                    
+  
+  # Bump version in apps/vscode/onyvore/package.json, then:                                                                                                     
+  git tag onyvore-v1.0.1                                                                                                                                        
+  git push origin onyvore-v1.0.1
+                                                                                                                                                                
+  The tag push triggers the workflow, which builds the VSIX and publishes it.
+                                                                                                                                                                
+  Optional additions:                                                                                                                                           
+  - Add a step to auto-bump the version: npx vsce publish patch/minor/major instead of a fixed VSIX
+  - Upload the .vsix as a GitHub Release artifact with actions/upload-artifact or softprops/action-gh-release                                                   
+  - Add npx vsce verify-pat as an early step to fail fast if the token expired 

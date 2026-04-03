@@ -1,0 +1,775 @@
+/* ============================================================
+   Onyvore – VS Code Webview Styles
+   Colors: --vscode-editor-foreground / --vscode-editor-background
+   Section headers invert these two roles.
+   ============================================================ */
+
+/* ---- Reset & Base ---- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-editor-foreground);
+  background: var(--vscode-editor-background);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 20%, transparent);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 35%, transparent);
+}
+::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 50%, transparent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- App Shell ---- */
+.ony-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.ony-app__main {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  container-type: inline-size;
+}
+
+.ony-app__links {
+  border-top: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  max-height: 45%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  container-type: inline-size;
+}
+
+/* ---- Toolbar ---- */
+.ony-toolbar {
+  display: flex;
+  align-items: center;
+  height: 35px;
+  padding: 0 8px 0 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ony-toolbar__title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-editor-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ony-toolbar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vscode-editor-foreground);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: background 0.1s, opacity 0.1s;
+}
+
+.ony-toolbar__btn:hover {
+  background: color-mix(in srgb, var(--vscode-editor-background) 20%, transparent);
+  opacity: 1;
+}
+
+.ony-toolbar__btn:active {
+  opacity: 0.5;
+}
+
+.ony-toolbar__btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+  background: transparent;
+}
+
+.ony-toolbar__btn .codicon {
+  font-size: 16px;
+}
+
+/* ---- Collapsible Section (inverted colors) ---- */
+.ony-section {
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+}
+
+.ony-section:last-child {
+  border-bottom: none;
+}
+
+.ony-section__header {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 2px 0 0;
+  background: var(--vscode-editor-foreground);
+  color: var(--vscode-editor-background);
+  cursor: pointer;
+  user-select: none;
+  gap: 0;
+}
+
+.ony-section__header:hover {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 85%, var(--vscode-editor-background));
+}
+
+.ony-section__header:focus-visible {
+  outline: 1px solid var(--vscode-editor-background);
+  outline-offset: -1px;
+}
+
+.ony-section__chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  flex-shrink: 0;
+  color: var(--vscode-editor-background);
+}
+
+.ony-section__chevron .codicon {
+  font-size: 16px;
+  transition: transform 0.15s ease;
+  transform: rotate(90deg);
+}
+
+.ony-section--collapsed .ony-section__chevron .codicon {
+  transform: rotate(0deg);
+}
+
+.ony-section__title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-editor-background);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 22px;
+}
+
+.ony-section__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  margin-right: 4px;
+  flex-shrink: 0;
+}
+
+.ony-section__actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-right: 2px;
+}
+
+.ony-section__action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-editor-background);
+  cursor: pointer;
+  opacity: 0;
+  transition: background 0.1s, opacity 0.1s;
+}
+
+.ony-section__header:hover .ony-section__action-btn {
+  opacity: 0.7;
+}
+
+.ony-section__action-btn:hover {
+  background: color-mix(in srgb, var(--vscode-editor-background) 20%, transparent);
+  opacity: 1 !important;
+}
+
+.ony-section__action-btn .codicon {
+  font-size: 14px;
+}
+
+.ony-section__body {
+  overflow: hidden;
+}
+
+.ony-section--collapsed .ony-section__body {
+  display: none;
+}
+
+/* ---- Tree / File List ---- */
+.ony-tree {
+  list-style: none;
+}
+
+.ony-tree__item {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px 2px 20px;
+  cursor: pointer;
+  color: var(--vscode-editor-foreground);
+  text-decoration: none;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.ony-tree__item:hover {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent);
+}
+
+.ony-tree__item:focus-visible {
+  outline: 1px solid var(--vscode-editor-foreground);
+  outline-offset: -1px;
+}
+
+.ony-tree__icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  opacity: 0.6;
+  color: var(--vscode-editor-foreground);
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.ony-tree__icon .codicon {
+  font-size: 16px;
+}
+
+.ony-tree__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* When sidebar is narrow, stack label and sublabel vertically */
+@container (max-width: 200px) {
+  .ony-tree__text {
+    flex-direction: column;
+    gap: 0;
+  }
+}
+
+/* Fallback for browsers without container queries */
+@media (max-width: 250px) {
+  .ony-tree__text {
+    flex-direction: column;
+    gap: 0;
+  }
+}
+
+.ony-tree__label {
+  font-size: var(--vscode-font-size, 13px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-editor-foreground);
+}
+
+.ony-tree__sublabel {
+  font-size: 0.85em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.ony-tree__badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--vscode-editor-foreground);
+  color: var(--vscode-editor-background);
+  opacity: 0.55;
+}
+
+/* ---- Search Overlay ---- */
+.ony-search {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: var(--vscode-editor-background);
+  border-bottom: 2px solid var(--vscode-editor-foreground);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--vscode-editor-foreground) 20%, transparent);
+  animation: ony-search-in 0.12s ease-out;
+}
+
+@keyframes ony-search-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ony-search__field {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  gap: 6px;
+}
+
+.ony-search__icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+}
+
+.ony-search__icon .codicon {
+  font-size: 16px;
+}
+
+.ony-search__input {
+  flex: 1;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 30%, transparent);
+  border-radius: 2px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  outline: none;
+}
+
+.ony-search__input::placeholder {
+  color: var(--vscode-editor-foreground);
+  opacity: 0.4;
+}
+
+.ony-search__input:focus {
+  border-color: var(--vscode-editor-foreground);
+}
+
+.ony-search__results {
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.ony-search__result {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px;
+  cursor: pointer;
+  gap: 1px;
+}
+
+.ony-search__result:hover {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent);
+}
+
+.ony-search__result-title {
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-editor-foreground);
+}
+
+.ony-search__result-path {
+  font-size: 0.85em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+}
+
+.ony-search__empty {
+  padding: 8px 12px;
+  font-size: 0.9em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+  text-align: center;
+}
+
+/* ---- Progress Bar ---- */
+.ony-progress {
+  height: 2px;
+  margin: 0 8px 4px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  overflow: hidden;
+}
+
+.ony-progress__bar {
+  height: 100%;
+  background: var(--vscode-editor-foreground);
+  border-radius: 1px;
+  transition: width 0.3s ease;
+}
+
+/* ---- Empty / Placeholder States ---- */
+.ony-empty {
+  padding: 16px 12px;
+  text-align: center;
+}
+
+.ony-empty__title {
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-editor-foreground);
+  margin-bottom: 6px;
+  opacity: 0.9;
+}
+
+.ony-empty__description {
+  font-size: 0.9em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.6;
+  line-height: 1.5;
+}
+
+.ony-empty__description strong {
+  opacity: 1;
+}
+
+.ony-empty__hint {
+  font-size: 0.85em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+  padding: 4px 12px;
+}
+
+/* ---- Error Boundary ---- */
+.ony-error {
+  padding: 12px;
+}
+
+.ony-error__title {
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-editor-foreground);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.ony-error__detail {
+  font-size: 0.9em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-editor-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.7;
+}
+
+/* ---- Status Indicator ---- */
+.ony-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.6;
+  padding: 0 4px;
+}
+
+.ony-status__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vscode-editor-foreground);
+  animation: ony-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes ony-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* ---- Notebook Selector ---- */
+.ony-selector {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.ony-selector__trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 20%, transparent);
+  border-radius: 3px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  cursor: pointer;
+  transition: border-color 0.1s;
+}
+
+.ony-selector__trigger:hover {
+  border-color: color-mix(in srgb, var(--vscode-editor-foreground) 40%, transparent);
+}
+
+.ony-selector__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.ony-selector__arrow {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  transition: transform 0.15s ease;
+}
+
+.ony-selector__arrow--open {
+  transform: rotate(180deg);
+}
+
+.ony-selector__arrow .codicon {
+  font-size: 14px;
+  opacity: 0.6;
+}
+
+.ony-selector__dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--vscode-editor-background);
+  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 25%, transparent);
+  border-radius: 3px;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  animation: ony-dropdown-in 0.1s ease-out;
+}
+
+@keyframes ony-dropdown-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ony-selector__filter {
+  padding: 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 12%, transparent);
+}
+
+.ony-selector__input {
+  width: 100%;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 20%, transparent);
+  border-radius: 2px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  outline: none;
+}
+
+.ony-selector__input:focus {
+  border-color: var(--vscode-editor-foreground);
+}
+
+.ony-selector__input::placeholder {
+  color: var(--vscode-editor-foreground);
+  opacity: 0.4;
+}
+
+.ony-selector__list {
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.ony-selector__option {
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: var(--vscode-font-size, 13px);
+  color: var(--vscode-editor-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ony-selector__option:hover {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent);
+}
+
+.ony-selector__option--active {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  font-weight: 600;
+}
+
+.ony-selector__empty {
+  padding: 6px 8px;
+  font-size: 0.9em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+  text-align: center;
+}
+
+/* ---- Omnipresent Search Bar ---- */
+.ony-searchbar {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  flex-shrink: 0;
+}
+
+.ony-searchbar__icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+}
+
+.ony-searchbar__icon .codicon {
+  font-size: 16px;
+}
+
+.ony-searchbar__input {
+  flex: 1;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 20%, transparent);
+  border-radius: 2px;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size, 13px);
+  outline: none;
+}
+
+.ony-searchbar__input:focus {
+  border-color: var(--vscode-editor-foreground);
+}
+
+.ony-searchbar__input::placeholder {
+  color: var(--vscode-editor-foreground);
+  opacity: 0.4;
+}
+
+.ony-searchbar__input:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ony-searchbar__results {
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 15%, transparent);
+  max-height: 50%;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.ony-searchbar__result-group {
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-editor-foreground) 8%, transparent);
+}
+
+.ony-searchbar__result-group:last-child {
+  border-bottom: none;
+}
+
+.ony-searchbar__snippet {
+  padding: 2px 12px 2px 42px;
+  font-size: 0.82em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.ony-searchbar__snippet:hover {
+  opacity: 0.85;
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 5%, transparent);
+}
+
+.ony-searchbar__highlight {
+  background: color-mix(in srgb, var(--vscode-editor-foreground) 20%, transparent);
+  color: var(--vscode-editor-foreground);
+  opacity: 1;
+  border-radius: 1px;
+  padding: 0 1px;
+}
+
+.ony-searchbar__empty {
+  padding: 6px 12px;
+  font-size: 0.9em;
+  color: var(--vscode-editor-foreground);
+  opacity: 0.5;
+  text-align: center;
+}

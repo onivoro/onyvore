@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+If you're working on a route that's not covered by our ui_monitoring scripts yet, add a test to screenshot that area of the app coverage according to our current conventions.

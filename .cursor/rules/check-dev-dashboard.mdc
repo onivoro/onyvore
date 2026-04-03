@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+After making changes to anything related to botvim, check the botvim dev-dashboard logs in apps/server/botvim/logs/dashboard.log as well as look at the parsed version of the DOM in ui_snapshots/botvim/render-log.ndjson.

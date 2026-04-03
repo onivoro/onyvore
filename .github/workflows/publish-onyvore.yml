@@ -1,0 +1,58 @@
+name: publish-onyvore
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/vscode/onyvore/package.json
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for version change
+        id: version_check
+        run: |
+          LOCAL=$(node -p "require('./apps/vscode/onyvore/package.json').version")
+          PUBLISHED=$(npx @vscode/vsce show onivoro.onyvore --json 2>/dev/null | node -p "try{JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).versions[0].version}catch{''}" || echo "")
+          echo "local=$LOCAL published=$PUBLISHED"
+          if [ "$LOCAL" != "$PUBLISHED" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.version_check.outputs.changed == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.version_check.outputs.changed == 'true'
+        run: npm ci
+
+      - name: Build VSIX
+        if: steps.version_check.outputs.changed == 'true'
+        run: npm run onyvore:vsix
+
+      - name: Publish to Marketplace
+        if: steps.version_check.outputs.changed == 'true'
+        run: npx @vscode/vsce publish --packagePath apps/vscode/onyvore/onyvore.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Tag release
+        if: steps.version_check.outputs.changed == 'true'
+        run: |
+          VERSION=$(node -p "require('./apps/vscode/onyvore/package.json').version")
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "onyvore-v${VERSION}"
+          git push origin "onyvore-v${VERSION}"

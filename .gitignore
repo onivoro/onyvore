@@ -1,0 +1,122 @@
+# See http://help.github.com/ignore-files/ for more about ignoring files.
+
+# Environment
+*.env
+.env.local
+.env*
+!example.env
+!.env.*.example
+
+# MCP configuration with secrets
+.vscode/mcp.json
+.cursor/mcp.json
+
+# compiled output
+/dist
+/tmp
+/out-tsc
+/zips
+
+# /scripts/test-deployed-lambda.js output
+outputfile.txt
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+/libpeerconnection.log
+npm-debug.log
+yarn-error.log
+testem.log
+/typings
+.npmrc
+
+# System Files
+.DS_Store
+Thumbs.db
+
+.angular
+
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files, which are likely to contain sensitive data, such as
+# password, private keys, and other secrets. These should not be part of version
+# control as they are data points which are potentially sensitive and subject
+# to change depending on the environment.
+*.tfvars
+*.tfvars.json
+
+# Ignore override files as they are usually used to override resources locally and so
+# are not checked in
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Include override files you do wish to add to version control using negated pattern
+# !example_override.tf
+
+# Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
+# example: *tfplan*
+
+# Ignore CLI configuration files
+.terraformrc
+terraform.rc
+.nx/cache
+.nx/workspace-data
+
+storybook-static
+products.csv
+pharmacy-products.json
+
+bak
+_tmp
+**/vite.config.{js,ts,mjs,mts,cjs,cts}.timestamp*
+
+# Botvim logs & artefacts
+apps/server/botvim/logs/
+apps/browser/botvim/logs/
+tests/playwright/botvim/screenshots/
+reports/botvim/
+
+ui_snapshots/botvim/render-log*.ndjson
+/ui_snapshots/botvim/
+
+
+/apps/browser/botvim/logs
+/ui_snapshots/botvim/latest/
+/ui_snapshots
+apps/server/botvim/logs
+
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+.onyvore
