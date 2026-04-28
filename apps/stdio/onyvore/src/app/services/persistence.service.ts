@@ -4,6 +4,7 @@ import * as path from 'path';
 import { SearchIndexService } from './search-index.service';
 import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
+import { TfidfService } from './tfidf.service';
 
 @Injectable()
 export class PersistenceService {
@@ -11,6 +12,7 @@ export class PersistenceService {
     private readonly searchIndexService: SearchIndexService,
     private readonly linkGraphService: LinkGraphService,
     private readonly metadataService: MetadataService,
+    private readonly tfidfService: TfidfService,
   ) {}
 
   private onyvoreDir(rootPath: string): string {
@@ -25,6 +27,7 @@ export class PersistenceService {
       this.persistIndex(notebookId),
       this.persistLinks(notebookId),
       this.persistMetadata(notebookId),
+      this.persistTfidf(notebookId),
     ]);
   }
 
@@ -56,6 +59,16 @@ export class PersistenceService {
     );
   }
 
+  async persistTfidf(notebookId: string): Promise<void> {
+    const data = this.tfidfService.serialize(notebookId);
+    if (!data) return;
+    const json = JSON.stringify(data, null, 2);
+    await this.atomicWrite(
+      path.join(this.onyvoreDir(notebookId), 'tfidf.json'),
+      json,
+    );
+  }
+
   async loadAll(notebookId: string): Promise<boolean> {
     const dir = this.onyvoreDir(notebookId);
 
@@ -65,13 +78,15 @@ export class PersistenceService {
       return false;
     }
 
-    const [indexLoaded, linksLoaded, metadataLoaded] = await Promise.all([
-      this.loadIndex(notebookId),
-      this.loadLinks(notebookId),
-      this.loadMetadata(notebookId),
-    ]);
+    const [indexLoaded, linksLoaded, metadataLoaded, tfidfLoaded] =
+      await Promise.all([
+        this.loadIndex(notebookId),
+        this.loadLinks(notebookId),
+        this.loadMetadata(notebookId),
+        this.loadTfidf(notebookId),
+      ]);
 
-    return indexLoaded && linksLoaded && metadataLoaded;
+    return indexLoaded && linksLoaded && metadataLoaded && tfidfLoaded;
   }
 
   async loadIndex(notebookId: string): Promise<boolean> {
@@ -109,9 +124,21 @@ export class PersistenceService {
     }
   }
 
+  async loadTfidf(notebookId: string): Promise<boolean> {
+    try {
+      const filePath = path.join(this.onyvoreDir(notebookId), 'tfidf.json');
+      const raw = await fs.readFile(filePath, 'utf-8');
+      const data = JSON.parse(raw);
+      this.tfidfService.deserialize(notebookId, data);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async deleteArtifacts(notebookId: string): Promise<void> {
     const dir = this.onyvoreDir(notebookId);
-    const files = ['index.bin', 'links.json', 'metadata.json'];
+    const files = ['index.bin', 'links.json', 'metadata.json', 'tfidf.json'];
     for (const file of files) {
       try {
         await fs.unlink(path.join(dir, file));

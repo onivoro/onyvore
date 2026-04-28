@@ -4,6 +4,13 @@
   "sourceRoot": "apps/stdio/onyvore/src",
   "projectType": "application",
   "targets": {
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/apps/stdio/onyvore"],
+      "options": {
+        "jestConfig": "apps/stdio/onyvore/jest.config.ts"
+      }
+    },
     "build": {
       "executor": "@nx/webpack:webpack",
       "outputs": ["{options.outputPath}"],

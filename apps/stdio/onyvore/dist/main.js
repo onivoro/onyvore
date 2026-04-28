@@ -30114,7 +30114,8 @@ const search_index_service_1 = __webpack_require__(665);
 const link_graph_service_1 = __webpack_require__(709);
 const metadata_service_1 = __webpack_require__(710);
 const persistence_service_1 = __webpack_require__(711);
-const reconciliation_service_1 = __webpack_require__(713);
+const reconciliation_service_1 = __webpack_require__(714);
+const tfidf_service_1 = __webpack_require__(713);
 const config = new app_stdio_onyvore_config_class_1.AppStdioOnyvoreConfig();
 let AppStdioOnyvoreModule = class AppStdioOnyvoreModule {
 };
@@ -30137,6 +30138,7 @@ exports.AppStdioOnyvoreModule = AppStdioOnyvoreModule = tslib_1.__decorate([
             metadata_service_1.MetadataService,
             persistence_service_1.PersistenceService,
             reconciliation_service_1.ReconciliationService,
+            tfidf_service_1.TfidfService,
         ],
         exports: [server_stdio_1.StdioMessageBus, isomorphic_jsonrpc_1.MESSAGE_BUS],
     })
@@ -30153,6 +30155,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AppStdioOnyvoreConfig = void 0;
 class AppStdioOnyvoreConfig {
     debounceCheckpointInterval = 100;
+    similarityThreshold = 0.15;
 }
 exports.AppStdioOnyvoreConfig = AppStdioOnyvoreConfig;
 
@@ -30163,7 +30166,7 @@ exports.AppStdioOnyvoreConfig = AppStdioOnyvoreConfig;
 
 "use strict";
 
-var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
+var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.OnyvoreMessageHandlerService = void 0;
 const tslib_1 = __webpack_require__(3);
@@ -30177,7 +30180,8 @@ const search_index_service_1 = __webpack_require__(665);
 const link_graph_service_1 = __webpack_require__(709);
 const metadata_service_1 = __webpack_require__(710);
 const persistence_service_1 = __webpack_require__(711);
-const reconciliation_service_1 = __webpack_require__(713);
+const reconciliation_service_1 = __webpack_require__(714);
+const tfidf_service_1 = __webpack_require__(713);
 let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
     messageBus;
     nlpService;
@@ -30186,8 +30190,9 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
     metadataService;
     persistenceService;
     reconciliationService;
+    tfidfService;
     notebooks = new Map();
-    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, reconciliationService) {
+    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, reconciliationService, tfidfService) {
         this.messageBus = messageBus;
         this.nlpService = nlpService;
         this.searchIndexService = searchIndexService;
@@ -30195,6 +30200,7 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
         this.metadataService = metadataService;
         this.persistenceService = persistenceService;
         this.reconciliationService = reconciliationService;
+        this.tfidfService = tfidfService;
     }
     async health() {
         return { status: 'ok', timestamp: new Date().toISOString() };
@@ -30215,6 +30221,7 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
         this.searchIndexService.removeIndex(notebookId);
         this.linkGraphService.removeGraph(notebookId);
         this.metadataService.remove(notebookId);
+        this.tfidfService.removeCorpus(notebookId);
         return { success: true };
     }
     async initializeNotebook(params) {
@@ -30241,12 +30248,12 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
         if (!notebook)
             return { success: false };
         notebook.status = 'reconciling';
-        // Load persisted state first
+        // Load persisted state (includes TF-IDF corpus from tfidf.json)
         await this.persistenceService.loadAll(notebookId);
-        // Re-register titles from metadata for link graph
+        // Register files from metadata for graph orphan detection
         const files = this.metadataService.getAllFiles(notebookId);
         for (const relPath of Object.keys(files)) {
-            this.linkGraphService.registerTitle(notebookId, relPath);
+            this.linkGraphService.registerFile(notebookId, relPath);
         }
         // Run reconciliation asynchronously
         this.reconciliationService
@@ -30275,7 +30282,11 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
                     const content = await fs.readFile(fullPath, 'utf-8');
                     const stat = await fs.stat(fullPath);
                     await this.searchIndexService.addDocument(notebookId, relativePath, title, content);
-                    this.linkGraphService.processCreate(notebookId, relativePath, content);
+                    const terms = this.nlpService.extractTerms(content);
+                    this.tfidfService.setDocument(notebookId, relativePath, terms);
+                    this.linkGraphService.registerFile(notebookId, relativePath);
+                    const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+                    this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
                     this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
                     break;
                 }
@@ -30284,13 +30295,18 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
                     const content = await fs.readFile(fullPath, 'utf-8');
                     const stat = await fs.stat(fullPath);
                     await this.searchIndexService.updateDocument(notebookId, relativePath, title, content);
-                    this.linkGraphService.processChange(notebookId, relativePath, content);
+                    const terms = this.nlpService.extractTerms(content);
+                    this.tfidfService.setDocument(notebookId, relativePath, terms);
+                    const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+                    this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
                     this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
                     break;
                 }
                 case 'delete': {
                     await this.searchIndexService.removeDocument(notebookId, relativePath);
-                    this.linkGraphService.processDelete(notebookId, relativePath);
+                    this.tfidfService.removeDocument(notebookId, relativePath);
+                    this.linkGraphService.removeAllEdgesForFile(notebookId, relativePath);
+                    this.linkGraphService.unregisterFile(notebookId, relativePath);
                     this.metadataService.removeFile(notebookId, relativePath);
                     break;
                 }
@@ -30310,7 +30326,9 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
         // Remove newly-ignored files
         for (const relPath of ignoredPaths) {
             await this.searchIndexService.removeDocument(notebookId, relPath);
-            this.linkGraphService.processDelete(notebookId, relPath);
+            this.tfidfService.removeDocument(notebookId, relPath);
+            this.linkGraphService.removeAllEdgesForFile(notebookId, relPath);
+            this.linkGraphService.unregisterFile(notebookId, relPath);
             this.metadataService.removeFile(notebookId, relPath);
         }
         // Process newly-included files
@@ -30321,7 +30339,11 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
                 const stat = await fs.stat(fullPath);
                 const title = this.searchTitleFromPath(relPath);
                 await this.searchIndexService.addDocument(notebookId, relPath, title, content);
-                this.linkGraphService.processCreate(notebookId, relPath, content);
+                const terms = this.nlpService.extractTerms(content);
+                this.tfidfService.setDocument(notebookId, relPath, terms);
+                this.linkGraphService.registerFile(notebookId, relPath);
+                const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+                this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
                 this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
             }
             catch {
@@ -30380,6 +30402,7 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
         this.searchIndexService.removeIndex(notebookId);
         this.linkGraphService.removeGraph(notebookId);
         this.metadataService.remove(notebookId);
+        this.tfidfService.removeCorpus(notebookId);
         // Re-initialize from scratch
         notebook.status = 'initializing';
         this.reconciliationService
@@ -30407,78 +30430,78 @@ tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)('health'),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", []),
-    tslib_1.__metadata("design:returntype", typeof (_h = typeof Promise !== "undefined" && Promise) === "function" ? _h : Object)
+    tslib_1.__metadata("design:returntype", typeof (_j = typeof Promise !== "undefined" && Promise) === "function" ? _j : Object)
 ], OnyvoreMessageHandlerService.prototype, "health", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_REGISTER),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_j = typeof Promise !== "undefined" && Promise) === "function" ? _j : Object)
+    tslib_1.__metadata("design:returntype", typeof (_k = typeof Promise !== "undefined" && Promise) === "function" ? _k : Object)
 ], OnyvoreMessageHandlerService.prototype, "registerNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_UNREGISTER),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_k = typeof Promise !== "undefined" && Promise) === "function" ? _k : Object)
+    tslib_1.__metadata("design:returntype", typeof (_l = typeof Promise !== "undefined" && Promise) === "function" ? _l : Object)
 ], OnyvoreMessageHandlerService.prototype, "unregisterNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_INITIALIZE),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_l = typeof Promise !== "undefined" && Promise) === "function" ? _l : Object)
+    tslib_1.__metadata("design:returntype", typeof (_m = typeof Promise !== "undefined" && Promise) === "function" ? _m : Object)
 ], OnyvoreMessageHandlerService.prototype, "initializeNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_RECONCILE),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_m = typeof Promise !== "undefined" && Promise) === "function" ? _m : Object)
+    tslib_1.__metadata("design:returntype", typeof (_o = typeof Promise !== "undefined" && Promise) === "function" ? _o : Object)
 ], OnyvoreMessageHandlerService.prototype, "reconcileNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_FILE_EVENT),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_o = typeof Promise !== "undefined" && Promise) === "function" ? _o : Object)
+    tslib_1.__metadata("design:returntype", typeof (_p = typeof Promise !== "undefined" && Promise) === "function" ? _p : Object)
 ], OnyvoreMessageHandlerService.prototype, "handleFileEvent", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_p = typeof Promise !== "undefined" && Promise) === "function" ? _p : Object)
+    tslib_1.__metadata("design:returntype", typeof (_q = typeof Promise !== "undefined" && Promise) === "function" ? _q : Object)
 ], OnyvoreMessageHandlerService.prototype, "handleIgnoreChanged", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_SEARCH),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_q = typeof Promise !== "undefined" && Promise) === "function" ? _q : Object)
+    tslib_1.__metadata("design:returntype", typeof (_r = typeof Promise !== "undefined" && Promise) === "function" ? _r : Object)
 ], OnyvoreMessageHandlerService.prototype, "searchNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_GET_LINKS),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_r = typeof Promise !== "undefined" && Promise) === "function" ? _r : Object)
+    tslib_1.__metadata("design:returntype", typeof (_s = typeof Promise !== "undefined" && Promise) === "function" ? _s : Object)
 ], OnyvoreMessageHandlerService.prototype, "getLinks", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_GET_NOTEBOOKS),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", []),
-    tslib_1.__metadata("design:returntype", typeof (_s = typeof Promise !== "undefined" && Promise) === "function" ? _s : Object)
+    tslib_1.__metadata("design:returntype", typeof (_t = typeof Promise !== "undefined" && Promise) === "function" ? _t : Object)
 ], OnyvoreMessageHandlerService.prototype, "getNotebooks", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_GET_ORPHANS),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_t = typeof Promise !== "undefined" && Promise) === "function" ? _t : Object)
+    tslib_1.__metadata("design:returntype", typeof (_u = typeof Promise !== "undefined" && Promise) === "function" ? _u : Object)
 ], OnyvoreMessageHandlerService.prototype, "getOrphans", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_REBUILD),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_u = typeof Promise !== "undefined" && Promise) === "function" ? _u : Object)
+    tslib_1.__metadata("design:returntype", typeof (_v = typeof Promise !== "undefined" && Promise) === "function" ? _v : Object)
 ], OnyvoreMessageHandlerService.prototype, "rebuildNotebook", null);
 exports.OnyvoreMessageHandlerService = OnyvoreMessageHandlerService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
     tslib_1.__param(0, (0, common_1.Inject)(isomorphic_jsonrpc_1.MESSAGE_BUS)),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof reconciliation_service_1.ReconciliationService !== "undefined" && reconciliation_service_1.ReconciliationService) === "function" ? _g : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof reconciliation_service_1.ReconciliationService !== "undefined" && reconciliation_service_1.ReconciliationService) === "function" ? _g : Object, typeof (_h = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _h : Object])
 ], OnyvoreMessageHandlerService);
 
 
@@ -30586,10 +30609,15 @@ const common_1 = __webpack_require__(87);
 const compromise_1 = tslib_1.__importDefault(__webpack_require__(664));
 const isomorphic_onyvore_1 = __webpack_require__(659);
 let NlpService = class NlpService {
-    extractNounPhrases(content) {
+    /**
+     * Extract lemmatized noun terms from content.
+     * Uses compromise for POS tagging, noun extraction, and singular-form lemmatization.
+     * Returns a Map of normalized term -> occurrence count.
+     */
+    extractTerms(content) {
         const doc = (0, compromise_1.default)(content);
-        const rawPhrases = doc.nouns().out('array');
-        const phrases = new Map();
+        const rawPhrases = doc.nouns().toSingular().out('array');
+        const terms = new Map();
         for (const raw of rawPhrases) {
             const normalized = raw.toLowerCase().trim().replace(/[^\w\s-]/g, '');
             if (normalized.length <= 1)
@@ -30597,7 +30625,7 @@ let NlpService = class NlpService {
             const words = normalized.split(/\s+/);
             // Full phrase — keep if not a stop noun
             if (!isomorphic_onyvore_1.STOP_NOUNS.has(normalized)) {
-                phrases.set(normalized, (phrases.get(normalized) ?? 0) + 1);
+                terms.set(normalized, (terms.get(normalized) ?? 0) + 1);
             }
             // Decompose multi-word phrases into individual words
             if (words.length > 1) {
@@ -30606,11 +30634,11 @@ let NlpService = class NlpService {
                         continue;
                     if (isomorphic_onyvore_1.STOP_NOUNS.has(word))
                         continue;
-                    phrases.set(word, (phrases.get(word) ?? 0) + 1);
+                    terms.set(word, (terms.get(word) ?? 0) + 1);
                 }
             }
         }
-        return { phrases };
+        return terms;
     }
 };
 exports.NlpService = NlpService;
@@ -37459,19 +37487,13 @@ Object.defineProperty(exports, "normalizeToken", ({ enumerable: true, get: funct
 
 "use strict";
 
-var _a;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LinkGraphService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(87);
-const nlp_service_1 = __webpack_require__(663);
 const path = tslib_1.__importStar(__webpack_require__(654));
 let LinkGraphService = class LinkGraphService {
-    nlpService;
     graphs = new Map();
-    constructor(nlpService) {
-        this.nlpService = nlpService;
-    }
     getOrCreateGraph(notebookId) {
         let graph = this.graphs.get(notebookId);
         if (!graph) {
@@ -37479,8 +37501,7 @@ let LinkGraphService = class LinkGraphService {
                 edges: new Map(),
                 outboundIndex: new Map(),
                 inboundIndex: new Map(),
-                phraseCache: new Map(),
-                titleIndex: new Map(),
+                files: new Set(),
             };
             this.graphs.set(notebookId, graph);
         }
@@ -37489,92 +37510,56 @@ let LinkGraphService = class LinkGraphService {
     removeGraph(notebookId) {
         this.graphs.delete(notebookId);
     }
-    processCreate(notebookId, relativePath, content) {
+    /** Register a file as existing in the graph (for orphan detection). */
+    registerFile(notebookId, filePath) {
         const graph = this.getOrCreateGraph(notebookId);
-        // Register all title variants (basename + path-qualified)
-        for (const title of this.titlesFromPath(relativePath)) {
-            if (!graph.titleIndex.has(title)) {
-                graph.titleIndex.set(title, new Set());
-            }
-            graph.titleIndex.get(title).add(relativePath);
-        }
-        // Extract noun phrases and cache them
-        const extraction = this.nlpService.extractNounPhrases(content);
-        graph.phraseCache.set(relativePath, extraction.phrases);
-        // Build outbound edges: this file's phrases matched against all titles
-        const outboundEdges = this.matchPhrasesAgainstTitles(relativePath, extraction.phrases, graph.titleIndex);
-        for (const edge of outboundEdges) {
-            this.addEdge(graph, edge);
-        }
-        // Reverse match: scan all other files' cached phrases for matches against this file's titles
-        const titles = this.titlesFromPath(relativePath);
-        for (const [otherPath, otherPhrases] of graph.phraseCache) {
-            if (otherPath === relativePath)
-                continue;
-            // Check all title variants (basename, parent/basename)
-            let bestNoun = null;
-            let totalCount = 0;
-            let bestCount = 0;
-            for (const t of titles) {
-                const count = otherPhrases.get(t);
-                if (count !== undefined) {
-                    totalCount += count;
-                    if (count > bestCount) {
-                        bestCount = count;
-                        bestNoun = t;
-                    }
-                }
-            }
-            if (!bestNoun)
-                continue;
-            const key = `${otherPath}::${relativePath}`;
-            const existing = graph.edges.get(key);
-            if (existing) {
-                existing.count += totalCount;
-                if (bestCount > (otherPhrases.get(existing.noun) ?? 0)) {
-                    existing.noun = bestNoun;
-                }
-            }
-            else {
-                this.addEdge(graph, {
-                    source: otherPath,
-                    target: relativePath,
-                    noun: bestNoun,
-                    count: totalCount,
-                });
-            }
+        graph.files.add(filePath);
+    }
+    /** Unregister a file from the graph. */
+    unregisterFile(notebookId, filePath) {
+        const graph = this.graphs.get(notebookId);
+        if (graph) {
+            graph.files.delete(filePath);
         }
     }
-    processChange(notebookId, relativePath, content) {
+    /**
+     * Replace ALL edges involving a given file (both outbound AND inbound)
+     * with the provided edge set. Called after TfidfService.computeEdgesForDocument().
+     */
+    replaceEdgesForFile(notebookId, filePath, edges) {
         const graph = this.getOrCreateGraph(notebookId);
-        // Remove all outbound edges from this file
-        this.removeOutboundEdges(graph, relativePath);
-        // Re-extract noun phrases and update cache
-        const extraction = this.nlpService.extractNounPhrases(content);
-        graph.phraseCache.set(relativePath, extraction.phrases);
-        // Rebuild outbound edges
-        const outboundEdges = this.matchPhrasesAgainstTitles(relativePath, extraction.phrases, graph.titleIndex);
-        for (const edge of outboundEdges) {
+        // Remove all existing edges where this file is source or target
+        this.removeOutboundEdges(graph, filePath);
+        this.removeInboundEdges(graph, filePath);
+        // Insert the new edge set
+        for (const edge of edges) {
             this.addEdge(graph, edge);
         }
     }
-    processDelete(notebookId, relativePath) {
+    /**
+     * Replace ALL edges in the graph. Used during full initialization
+     * after TfidfService.computeAllEdges().
+     */
+    replaceAllEdges(notebookId, edges) {
         const graph = this.getOrCreateGraph(notebookId);
-        // Remove all outbound edges from this file
-        this.removeOutboundEdges(graph, relativePath);
-        // Remove all inbound edges pointing to this file
-        this.removeInboundEdges(graph, relativePath);
-        // Remove from phrase cache and title index (all title variants)
-        graph.phraseCache.delete(relativePath);
-        for (const title of this.titlesFromPath(relativePath)) {
-            const pathsForTitle = graph.titleIndex.get(title);
-            if (pathsForTitle) {
-                pathsForTitle.delete(relativePath);
-                if (pathsForTitle.size === 0) {
-                    graph.titleIndex.delete(title);
-                }
-            }
+        // Clear all edge state
+        graph.edges.clear();
+        graph.outboundIndex.clear();
+        graph.inboundIndex.clear();
+        // Insert all new edges
+        for (const edge of edges) {
+            this.addEdge(graph, edge);
         }
+    }
+    /**
+     * Remove all edges involving a file. Called on file delete.
+     */
+    removeAllEdgesForFile(notebookId, filePath) {
+        const graph = this.graphs.get(notebookId);
+        if (!graph)
+            return;
+        this.removeOutboundEdges(graph, filePath);
+        this.removeInboundEdges(graph, filePath);
     }
     getLinksForNote(notebookId, relativePath) {
         const graph = this.graphs.get(notebookId);
@@ -37620,7 +37605,7 @@ let LinkGraphService = class LinkGraphService {
         if (!graph)
             return [];
         const orphans = [];
-        for (const [filePath] of graph.phraseCache) {
+        for (const filePath of graph.files) {
             const outKeys = graph.outboundIndex.get(filePath);
             const inKeys = graph.inboundIndex.get(filePath);
             const hasOutbound = outKeys && outKeys.size > 0;
@@ -37643,64 +37628,19 @@ let LinkGraphService = class LinkGraphService {
             this.addEdge(graph, edge);
         }
     }
-    loadPhraseCache(notebookId, filePath, phrases) {
-        const graph = this.getOrCreateGraph(notebookId);
-        graph.phraseCache.set(filePath, phrases);
-    }
-    registerTitle(notebookId, relativePath) {
-        const graph = this.getOrCreateGraph(notebookId);
-        for (const title of this.titlesFromPath(relativePath)) {
-            if (!graph.titleIndex.has(title)) {
-                graph.titleIndex.set(title, new Set());
-            }
-            graph.titleIndex.get(title).add(relativePath);
-        }
-    }
+    /**
+     * Returns the number of inbound edges (graph connectivity measure).
+     * Used by SearchIndexService for graph-boosted ranking.
+     */
     getInboundCount(notebookId, relativePath) {
         const graph = this.graphs.get(notebookId);
         if (!graph)
             return 0;
         const inKeys = graph.inboundIndex.get(relativePath);
-        if (!inKeys)
-            return 0;
-        let total = 0;
-        for (const key of inKeys) {
-            const edge = graph.edges.get(key);
-            if (edge)
-                total += edge.count;
-        }
-        return total;
+        return inKeys ? inKeys.size : 0;
     }
-    matchPhrasesAgainstTitles(sourcePath, phrases, titleIndex) {
-        const sourceBasename = this.titleFromPath(sourcePath);
-        const edgeMap = new Map();
-        for (const [phrase, count] of phrases) {
-            const matchingPaths = titleIndex.get(phrase);
-            if (!matchingPaths)
-                continue;
-            for (const targetPath of matchingPaths) {
-                // Self-link exclusion
-                if (targetPath === sourcePath)
-                    continue;
-                const key = `${sourcePath}::${targetPath}`;
-                const existing = edgeMap.get(key);
-                if (existing) {
-                    existing.count += count;
-                    if (count > (phrases.get(existing.noun) ?? 0)) {
-                        existing.noun = phrase;
-                    }
-                }
-                else {
-                    edgeMap.set(key, {
-                        source: sourcePath,
-                        target: targetPath,
-                        noun: phrase,
-                        count,
-                    });
-                }
-            }
-        }
-        return Array.from(edgeMap.values());
+    titleFromPath(relativePath) {
+        return path.basename(relativePath, '.md').toLowerCase();
     }
     addEdge(graph, edge) {
         const key = `${edge.source}::${edge.target}`;
@@ -37750,29 +37690,10 @@ let LinkGraphService = class LinkGraphService {
         }
         graph.inboundIndex.delete(targetPath);
     }
-    titleFromPath(relativePath) {
-        return path.basename(relativePath, '.md').toLowerCase();
-    }
-    /**
-     * Returns all title variants for a file path, used for titleIndex registration and matching.
-     * For "something/overview.md" returns ["overview", "something overview"].
-     * For root-level "overview.md" returns ["overview"].
-     */
-    titlesFromPath(relativePath) {
-        const basename = path.basename(relativePath, '.md').toLowerCase();
-        const dir = path.dirname(relativePath);
-        const titles = [basename];
-        if (dir && dir !== '.') {
-            const parentDir = path.basename(dir).toLowerCase();
-            titles.push(`${parentDir} ${basename}`);
-        }
-        return titles;
-    }
 };
 exports.LinkGraphService = LinkGraphService;
 exports.LinkGraphService = LinkGraphService = tslib_1.__decorate([
-    (0, common_1.Injectable)(),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _a : Object])
+    (0, common_1.Injectable)()
 ], LinkGraphService);
 
 
@@ -37840,7 +37761,7 @@ exports.MetadataService = MetadataService = tslib_1.__decorate([
 
 "use strict";
 
-var _a, _b, _c;
+var _a, _b, _c, _d;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PersistenceService = void 0;
 const tslib_1 = __webpack_require__(3);
@@ -37850,14 +37771,17 @@ const path = tslib_1.__importStar(__webpack_require__(654));
 const search_index_service_1 = __webpack_require__(665);
 const link_graph_service_1 = __webpack_require__(709);
 const metadata_service_1 = __webpack_require__(710);
+const tfidf_service_1 = __webpack_require__(713);
 let PersistenceService = class PersistenceService {
     searchIndexService;
     linkGraphService;
     metadataService;
-    constructor(searchIndexService, linkGraphService, metadataService) {
+    tfidfService;
+    constructor(searchIndexService, linkGraphService, metadataService, tfidfService) {
         this.searchIndexService = searchIndexService;
         this.linkGraphService = linkGraphService;
         this.metadataService = metadataService;
+        this.tfidfService = tfidfService;
     }
     onyvoreDir(rootPath) {
         return path.join(rootPath, '.onyvore');
@@ -37869,6 +37793,7 @@ let PersistenceService = class PersistenceService {
             this.persistIndex(notebookId),
             this.persistLinks(notebookId),
             this.persistMetadata(notebookId),
+            this.persistTfidf(notebookId),
         ]);
     }
     async persistIndex(notebookId) {
@@ -37889,6 +37814,13 @@ let PersistenceService = class PersistenceService {
         const json = JSON.stringify(data, null, 2);
         await this.atomicWrite(path.join(this.onyvoreDir(notebookId), 'metadata.json'), json);
     }
+    async persistTfidf(notebookId) {
+        const data = this.tfidfService.serialize(notebookId);
+        if (!data)
+            return;
+        const json = JSON.stringify(data, null, 2);
+        await this.atomicWrite(path.join(this.onyvoreDir(notebookId), 'tfidf.json'), json);
+    }
     async loadAll(notebookId) {
         const dir = this.onyvoreDir(notebookId);
         try {
@@ -37897,12 +37829,13 @@ let PersistenceService = class PersistenceService {
         catch {
             return false;
         }
-        const [indexLoaded, linksLoaded, metadataLoaded] = await Promise.all([
+        const [indexLoaded, linksLoaded, metadataLoaded, tfidfLoaded] = await Promise.all([
             this.loadIndex(notebookId),
             this.loadLinks(notebookId),
             this.loadMetadata(notebookId),
+            this.loadTfidf(notebookId),
         ]);
-        return indexLoaded && linksLoaded && metadataLoaded;
+        return indexLoaded && linksLoaded && metadataLoaded && tfidfLoaded;
     }
     async loadIndex(notebookId) {
         try {
@@ -37939,9 +37872,21 @@ let PersistenceService = class PersistenceService {
             return false;
         }
     }
+    async loadTfidf(notebookId) {
+        try {
+            const filePath = path.join(this.onyvoreDir(notebookId), 'tfidf.json');
+            const raw = await fs.readFile(filePath, 'utf-8');
+            const data = JSON.parse(raw);
+            this.tfidfService.deserialize(notebookId, data);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
     async deleteArtifacts(notebookId) {
         const dir = this.onyvoreDir(notebookId);
-        const files = ['index.bin', 'links.json', 'metadata.json'];
+        const files = ['index.bin', 'links.json', 'metadata.json', 'tfidf.json'];
         for (const file of files) {
             try {
                 await fs.unlink(path.join(dir, file));
@@ -37960,7 +37905,7 @@ let PersistenceService = class PersistenceService {
 exports.PersistenceService = PersistenceService;
 exports.PersistenceService = PersistenceService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _a : Object, typeof (_b = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _b : Object, typeof (_c = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _c : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _a : Object, typeof (_b = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _b : Object, typeof (_c = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _c : Object, typeof (_d = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _d : Object])
 ], PersistenceService);
 
 
@@ -37977,7 +37922,248 @@ module.exports = require("fs/promises");
 
 "use strict";
 
-var _a, _b, _c, _d, _e, _f;
+var _a;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TfidfService = void 0;
+const tslib_1 = __webpack_require__(3);
+const common_1 = __webpack_require__(87);
+const app_stdio_onyvore_config_class_1 = __webpack_require__(657);
+let TfidfService = class TfidfService {
+    config;
+    corpora = new Map();
+    constructor(config) {
+        this.config = config;
+    }
+    getOrCreateCorpus(notebookId) {
+        let corpus = this.corpora.get(notebookId);
+        if (!corpus) {
+            corpus = { tf: new Map(), df: new Map(), docCount: 0 };
+            this.corpora.set(notebookId, corpus);
+        }
+        return corpus;
+    }
+    removeCorpus(notebookId) {
+        this.corpora.delete(notebookId);
+    }
+    /**
+     * Register or update a document's term frequencies.
+     * Incrementally updates the DF map: decrements DF for old terms (if doc existed),
+     * increments DF for new terms.
+     */
+    setDocument(notebookId, filePath, terms) {
+        const corpus = this.getOrCreateCorpus(notebookId);
+        const oldTerms = corpus.tf.get(filePath);
+        if (oldTerms) {
+            // Decrement DF for terms in the old version
+            for (const term of oldTerms.keys()) {
+                const count = corpus.df.get(term);
+                if (count !== undefined) {
+                    if (count <= 1) {
+                        corpus.df.delete(term);
+                    }
+                    else {
+                        corpus.df.set(term, count - 1);
+                    }
+                }
+            }
+        }
+        else {
+            corpus.docCount++;
+        }
+        // Store new term frequencies
+        corpus.tf.set(filePath, terms);
+        // Increment DF for terms in the new version
+        for (const term of terms.keys()) {
+            corpus.df.set(term, (corpus.df.get(term) ?? 0) + 1);
+        }
+    }
+    /**
+     * Remove a document from the corpus. Decrements DF for all its terms.
+     */
+    removeDocument(notebookId, filePath) {
+        const corpus = this.corpora.get(notebookId);
+        if (!corpus)
+            return;
+        const oldTerms = corpus.tf.get(filePath);
+        if (!oldTerms)
+            return;
+        for (const term of oldTerms.keys()) {
+            const count = corpus.df.get(term);
+            if (count !== undefined) {
+                if (count <= 1) {
+                    corpus.df.delete(term);
+                }
+                else {
+                    corpus.df.set(term, count - 1);
+                }
+            }
+        }
+        corpus.tf.delete(filePath);
+        corpus.docCount--;
+    }
+    /**
+     * Compute all edges for a single document against the rest of the corpus.
+     * Returns edges in BOTH directions (A->B and B->A) for each pair above threshold.
+     */
+    computeEdgesForDocument(notebookId, filePath) {
+        const corpus = this.corpora.get(notebookId);
+        if (!corpus || corpus.docCount < 2)
+            return [];
+        const termsA = corpus.tf.get(filePath);
+        if (!termsA || termsA.size === 0)
+            return [];
+        const vecA = this.computeTfidfVector(termsA, corpus);
+        const magA = this.magnitude(vecA);
+        if (magA === 0)
+            return [];
+        const threshold = this.config.similarityThreshold;
+        const edges = [];
+        for (const [otherPath, otherTerms] of corpus.tf) {
+            if (otherPath === filePath)
+                continue;
+            if (otherTerms.size === 0)
+                continue;
+            const vecB = this.computeTfidfVector(otherTerms, corpus);
+            const magB = this.magnitude(vecB);
+            if (magB === 0)
+                continue;
+            const { dot, topTerm } = this.dotProductWithTopTerm(vecA, vecB);
+            const similarity = dot / (magA * magB);
+            if (similarity >= threshold && topTerm) {
+                const count = Math.round(similarity * 100);
+                edges.push({ source: filePath, target: otherPath, noun: topTerm, count }, { source: otherPath, target: filePath, noun: topTerm, count });
+            }
+        }
+        return edges;
+    }
+    /**
+     * Compute ALL edges for the entire corpus.
+     * Uses upper-triangle optimization since cosine similarity is symmetric.
+     */
+    computeAllEdges(notebookId) {
+        const corpus = this.corpora.get(notebookId);
+        if (!corpus || corpus.docCount < 2)
+            return [];
+        const threshold = this.config.similarityThreshold;
+        // Pre-compute all TF-IDF vectors and magnitudes
+        const entries = [];
+        for (const [filePath, terms] of corpus.tf) {
+            if (terms.size === 0)
+                continue;
+            const vec = this.computeTfidfVector(terms, corpus);
+            const mag = this.magnitude(vec);
+            if (mag === 0)
+                continue;
+            entries.push({ path: filePath, vec, mag });
+        }
+        const edges = [];
+        // Upper-triangle: only compute each pair once
+        for (let i = 0; i < entries.length; i++) {
+            for (let j = i + 1; j < entries.length; j++) {
+                const a = entries[i];
+                const b = entries[j];
+                const { dot, topTerm } = this.dotProductWithTopTerm(a.vec, b.vec);
+                const similarity = dot / (a.mag * b.mag);
+                if (similarity >= threshold && topTerm) {
+                    const count = Math.round(similarity * 100);
+                    edges.push({ source: a.path, target: b.path, noun: topTerm, count }, { source: b.path, target: a.path, noun: topTerm, count });
+                }
+            }
+        }
+        return edges;
+    }
+    serialize(notebookId) {
+        const corpus = this.corpora.get(notebookId);
+        if (!corpus)
+            return null;
+        const tf = {};
+        for (const [filePath, terms] of corpus.tf) {
+            const record = {};
+            for (const [term, count] of terms) {
+                record[term] = count;
+            }
+            tf[filePath] = record;
+        }
+        const df = {};
+        for (const [term, count] of corpus.df) {
+            df[term] = count;
+        }
+        return { tf, df };
+    }
+    deserialize(notebookId, data) {
+        const corpus = this.getOrCreateCorpus(notebookId);
+        for (const [filePath, terms] of Object.entries(data.tf)) {
+            const termMap = new Map();
+            for (const [term, count] of Object.entries(terms)) {
+                termMap.set(term, count);
+            }
+            corpus.tf.set(filePath, termMap);
+        }
+        for (const [term, count] of Object.entries(data.df)) {
+            corpus.df.set(term, count);
+        }
+        corpus.docCount = corpus.tf.size;
+    }
+    computeTfidfVector(terms, corpus) {
+        const vec = new Map();
+        const n = corpus.docCount;
+        for (const [term, rawTf] of terms) {
+            const docFreq = corpus.df.get(term);
+            if (!docFreq || docFreq === 0)
+                continue;
+            const idf = Math.log(n / docFreq);
+            if (idf === 0)
+                continue; // Term appears in every document — not discriminative
+            vec.set(term, rawTf * idf);
+        }
+        return vec;
+    }
+    magnitude(vec) {
+        let sum = 0;
+        for (const v of vec.values()) {
+            sum += v * v;
+        }
+        return Math.sqrt(sum);
+    }
+    /**
+     * Compute dot product of two sparse TF-IDF vectors.
+     * Also tracks which term contributed the most to the dot product
+     * (highest a[t] * b[t] product) — this becomes the Edge.noun.
+     */
+    dotProductWithTopTerm(vecA, vecB) {
+        let dot = 0;
+        let topContribution = 0;
+        let topTerm = null;
+        // Iterate over the smaller vector for efficiency
+        const [smaller, larger] = vecA.size <= vecB.size ? [vecA, vecB] : [vecB, vecA];
+        for (const [term, valSmall] of smaller) {
+            const valLarge = larger.get(term);
+            if (valLarge === undefined)
+                continue;
+            const contribution = valSmall * valLarge;
+            dot += contribution;
+            if (contribution > topContribution) {
+                topContribution = contribution;
+                topTerm = term;
+            }
+        }
+        return { dot, topTerm };
+    }
+};
+exports.TfidfService = TfidfService;
+exports.TfidfService = TfidfService = tslib_1.__decorate([
+    (0, common_1.Injectable)(),
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof app_stdio_onyvore_config_class_1.AppStdioOnyvoreConfig !== "undefined" && app_stdio_onyvore_config_class_1.AppStdioOnyvoreConfig) === "function" ? _a : Object])
+], TfidfService);
+
+
+/***/ }),
+/* 714 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+var _a, _b, _c, _d, _e, _f, _g;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ReconciliationService = void 0;
 const tslib_1 = __webpack_require__(3);
@@ -37991,6 +38177,7 @@ const search_index_service_1 = __webpack_require__(665);
 const link_graph_service_1 = __webpack_require__(709);
 const metadata_service_1 = __webpack_require__(710);
 const persistence_service_1 = __webpack_require__(711);
+const tfidf_service_1 = __webpack_require__(713);
 let ReconciliationService = class ReconciliationService {
     messageBus;
     nlpService;
@@ -37998,13 +38185,15 @@ let ReconciliationService = class ReconciliationService {
     linkGraphService;
     metadataService;
     persistenceService;
-    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService) {
+    tfidfService;
+    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, tfidfService) {
         this.messageBus = messageBus;
         this.nlpService = nlpService;
         this.searchIndexService = searchIndexService;
         this.linkGraphService = linkGraphService;
         this.metadataService = metadataService;
         this.persistenceService = persistenceService;
+        this.tfidfService = tfidfService;
     }
     async reconcile(notebookId) {
         const knownFiles = this.metadataService.getAllFiles(notebookId);
@@ -38035,27 +38224,38 @@ let ReconciliationService = class ReconciliationService {
             return;
         }
         let processed = 0;
-        // Process deletes first
+        // Phase 1: Process deletes first (update corpus before computing edges)
         for (const relPath of deleted) {
-            this.processDelete(notebookId, relPath);
+            this.tfidfService.removeDocument(notebookId, relPath);
+            this.linkGraphService.removeAllEdgesForFile(notebookId, relPath);
+            this.linkGraphService.unregisterFile(notebookId, relPath);
+            this.metadataService.removeFile(notebookId, relPath);
+            this.searchIndexService.removeDocument(notebookId, relPath).catch(() => { });
             processed++;
             this.sendProgress(notebookId, processed, total);
         }
-        // Then creates and modifications
-        for (const relPath of [...created, ...modified]) {
+        // Phase 2: Extract terms for all creates/changes (update corpus before edge computation)
+        const changedPaths = [...created, ...modified];
+        for (const relPath of changedPaths) {
             const content = await this.readFile(notebookId, relPath);
             const stat = await this.statFile(notebookId, relPath);
             const title = this.searchTitleFromPath(relPath);
             const isCreate = created.includes(relPath);
             if (isCreate) {
                 await this.searchIndexService.addDocument(notebookId, relPath, title, content);
-                this.linkGraphService.processCreate(notebookId, relPath, content);
             }
             else {
                 await this.searchIndexService.updateDocument(notebookId, relPath, title, content);
-                this.linkGraphService.processChange(notebookId, relPath, content);
             }
+            const terms = this.nlpService.extractTerms(content);
+            this.tfidfService.setDocument(notebookId, relPath, terms);
+            this.linkGraphService.registerFile(notebookId, relPath);
             this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
+        }
+        // Phase 3: Compute edges for each changed file (IDF is current after phase 2)
+        for (const relPath of changedPaths) {
+            const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+            this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
             processed++;
             this.sendProgress(notebookId, processed, total);
         }
@@ -38068,31 +38268,33 @@ let ReconciliationService = class ReconciliationService {
         const files = await this.scanFilesystem(notebookId);
         const total = files.length;
         let processed = 0;
+        // Phase 1: Extract terms for all files and register in TF-IDF corpus
         for (const file of files) {
             const content = await this.readFile(notebookId, file.relativePath);
             const title = this.searchTitleFromPath(file.relativePath);
             await this.searchIndexService.addDocument(notebookId, file.relativePath, title, content);
-            this.linkGraphService.processCreate(notebookId, file.relativePath, content);
+            const terms = this.nlpService.extractTerms(content);
+            this.tfidfService.setDocument(notebookId, file.relativePath, terms);
+            this.linkGraphService.registerFile(notebookId, file.relativePath);
             this.metadataService.setFile(notebookId, file.relativePath, file.mtimeMs);
             processed++;
             if (processed % 10 === 0 || processed === total) {
                 this.sendInitProgress(notebookId, processed, total);
             }
-            // Checkpoint every 100 files
+            // Checkpoint every 100 files (search index + metadata, not links yet)
             if (processed % 100 === 0) {
-                await this.persistenceService.persistAll(notebookId);
+                await this.persistenceService.persistIndex(notebookId);
+                await this.persistenceService.persistMetadata(notebookId);
+                await this.persistenceService.persistTfidf(notebookId);
             }
         }
+        // Phase 2: Compute all edges at once (IDF needs full corpus)
+        const edges = this.tfidfService.computeAllEdges(notebookId);
+        this.linkGraphService.replaceAllEdges(notebookId, edges);
         await this.persistenceService.persistAll(notebookId);
         this.messageBus.sendNotification(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_READY, {
             notebookId,
         });
-    }
-    processDelete(notebookId, relativePath) {
-        this.linkGraphService.processDelete(notebookId, relativePath);
-        this.metadataService.removeFile(notebookId, relativePath);
-        // Search index removeDocument is async but we fire-and-forget for deletes during reconciliation
-        this.searchIndexService.removeDocument(notebookId, relativePath).catch(() => { });
     }
     async scanFilesystem(notebookId) {
         const results = [];
@@ -38160,7 +38362,7 @@ exports.ReconciliationService = ReconciliationService;
 exports.ReconciliationService = ReconciliationService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
     tslib_1.__param(0, (0, common_1.Inject)(isomorphic_jsonrpc_1.MESSAGE_BUS)),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _g : Object])
 ], ReconciliationService);
 
 

@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { NlpService, ExtractionResult } from './nlp.service';
 import type { Edge, LinksForNote, LinkEntry } from '@onivoro/isomorphic-onyvore';
 import * as path from 'path';
 
@@ -7,15 +6,13 @@ interface LinkGraph {
   edges: Map<string, Edge>;
   outboundIndex: Map<string, Set<string>>;
   inboundIndex: Map<string, Set<string>>;
-  phraseCache: Map<string, Map<string, number>>;
-  titleIndex: Map<string, Set<string>>;
+  /** All files known to the graph (for orphan detection) */
+  files: Set<string>;
 }
 
 @Injectable()
 export class LinkGraphService {
   private graphs = new Map<string, LinkGraph>();
-
-  constructor(private readonly nlpService: NlpService) {}
 
   getOrCreateGraph(notebookId: string): LinkGraph {
     let graph = this.graphs.get(notebookId);
@@ -24,8 +21,7 @@ export class LinkGraphService {
         edges: new Map(),
         outboundIndex: new Map(),
         inboundIndex: new Map(),
-        phraseCache: new Map(),
-        titleIndex: new Map(),
+        files: new Set(),
       };
       this.graphs.set(notebookId, graph);
     }
@@ -36,111 +32,64 @@ export class LinkGraphService {
     this.graphs.delete(notebookId);
   }
 
-  processCreate(notebookId: string, relativePath: string, content: string): void {
+  /** Register a file as existing in the graph (for orphan detection). */
+  registerFile(notebookId: string, filePath: string): void {
     const graph = this.getOrCreateGraph(notebookId);
+    graph.files.add(filePath);
+  }
 
-    // Register all title variants (basename + path-qualified)
-    for (const title of this.titlesFromPath(relativePath)) {
-      if (!graph.titleIndex.has(title)) {
-        graph.titleIndex.set(title, new Set());
-      }
-      graph.titleIndex.get(title)!.add(relativePath);
-    }
-
-    // Extract noun phrases and cache them
-    const extraction = this.nlpService.extractNounPhrases(content);
-    graph.phraseCache.set(relativePath, extraction.phrases);
-
-    // Build outbound edges: this file's phrases matched against all titles
-    const outboundEdges = this.matchPhrasesAgainstTitles(
-      relativePath,
-      extraction.phrases,
-      graph.titleIndex,
-    );
-    for (const edge of outboundEdges) {
-      this.addEdge(graph, edge);
-    }
-
-    // Reverse match: scan all other files' cached phrases for matches against this file's titles
-    const titles = this.titlesFromPath(relativePath);
-    for (const [otherPath, otherPhrases] of graph.phraseCache) {
-      if (otherPath === relativePath) continue;
-
-      // Check all title variants (basename, parent/basename)
-      let bestNoun: string | null = null;
-      let totalCount = 0;
-      let bestCount = 0;
-      for (const t of titles) {
-        const count = otherPhrases.get(t);
-        if (count !== undefined) {
-          totalCount += count;
-          if (count > bestCount) {
-            bestCount = count;
-            bestNoun = t;
-          }
-        }
-      }
-      if (!bestNoun) continue;
-
-      const key = `${otherPath}::${relativePath}`;
-      const existing = graph.edges.get(key);
-      if (existing) {
-        existing.count += totalCount;
-        if (bestCount > (otherPhrases.get(existing.noun) ?? 0)) {
-          existing.noun = bestNoun;
-        }
-      } else {
-        this.addEdge(graph, {
-          source: otherPath,
-          target: relativePath,
-          noun: bestNoun,
-          count: totalCount,
-        });
-      }
+  /** Unregister a file from the graph. */
+  unregisterFile(notebookId: string, filePath: string): void {
+    const graph = this.graphs.get(notebookId);
+    if (graph) {
+      graph.files.delete(filePath);
     }
   }
 
-  processChange(notebookId: string, relativePath: string, content: string): void {
+  /**
+   * Replace ALL edges involving a given file (both outbound AND inbound)
+   * with the provided edge set. Called after TfidfService.computeEdgesForDocument().
+   */
+  replaceEdgesForFile(notebookId: string, filePath: string, edges: Edge[]): void {
     const graph = this.getOrCreateGraph(notebookId);
 
-    // Remove all outbound edges from this file
-    this.removeOutboundEdges(graph, relativePath);
+    // Remove all existing edges where this file is source or target
+    this.removeOutboundEdges(graph, filePath);
+    this.removeInboundEdges(graph, filePath);
 
-    // Re-extract noun phrases and update cache
-    const extraction = this.nlpService.extractNounPhrases(content);
-    graph.phraseCache.set(relativePath, extraction.phrases);
-
-    // Rebuild outbound edges
-    const outboundEdges = this.matchPhrasesAgainstTitles(
-      relativePath,
-      extraction.phrases,
-      graph.titleIndex,
-    );
-    for (const edge of outboundEdges) {
+    // Insert the new edge set
+    for (const edge of edges) {
       this.addEdge(graph, edge);
     }
   }
 
-  processDelete(notebookId: string, relativePath: string): void {
+  /**
+   * Replace ALL edges in the graph. Used during full initialization
+   * after TfidfService.computeAllEdges().
+   */
+  replaceAllEdges(notebookId: string, edges: Edge[]): void {
     const graph = this.getOrCreateGraph(notebookId);
 
-    // Remove all outbound edges from this file
-    this.removeOutboundEdges(graph, relativePath);
+    // Clear all edge state
+    graph.edges.clear();
+    graph.outboundIndex.clear();
+    graph.inboundIndex.clear();
 
-    // Remove all inbound edges pointing to this file
-    this.removeInboundEdges(graph, relativePath);
-
-    // Remove from phrase cache and title index (all title variants)
-    graph.phraseCache.delete(relativePath);
-    for (const title of this.titlesFromPath(relativePath)) {
-      const pathsForTitle = graph.titleIndex.get(title);
-      if (pathsForTitle) {
-        pathsForTitle.delete(relativePath);
-        if (pathsForTitle.size === 0) {
-          graph.titleIndex.delete(title);
-        }
-      }
+    // Insert all new edges
+    for (const edge of edges) {
+      this.addEdge(graph, edge);
     }
+  }
+
+  /**
+   * Remove all edges involving a file. Called on file delete.
+   */
+  removeAllEdgesForFile(notebookId: string, filePath: string): void {
+    const graph = this.graphs.get(notebookId);
+    if (!graph) return;
+
+    this.removeOutboundEdges(graph, filePath);
+    this.removeInboundEdges(graph, filePath);
   }
 
   getLinksForNote(notebookId: string, relativePath: string): LinksForNote {
@@ -191,7 +140,7 @@ export class LinkGraphService {
     if (!graph) return [];
 
     const orphans: string[] = [];
-    for (const [filePath] of graph.phraseCache) {
+    for (const filePath of graph.files) {
       const outKeys = graph.outboundIndex.get(filePath);
       const inKeys = graph.inboundIndex.get(filePath);
       const hasOutbound = outKeys && outKeys.size > 0;
@@ -216,69 +165,19 @@ export class LinkGraphService {
     }
   }
 
-  loadPhraseCache(notebookId: string, filePath: string, phrases: Map<string, number>): void {
-    const graph = this.getOrCreateGraph(notebookId);
-    graph.phraseCache.set(filePath, phrases);
-  }
-
-  registerTitle(notebookId: string, relativePath: string): void {
-    const graph = this.getOrCreateGraph(notebookId);
-    for (const title of this.titlesFromPath(relativePath)) {
-      if (!graph.titleIndex.has(title)) {
-        graph.titleIndex.set(title, new Set());
-      }
-      graph.titleIndex.get(title)!.add(relativePath);
-    }
-  }
-
+  /**
+   * Returns the number of inbound edges (graph connectivity measure).
+   * Used by SearchIndexService for graph-boosted ranking.
+   */
   getInboundCount(notebookId: string, relativePath: string): number {
     const graph = this.graphs.get(notebookId);
     if (!graph) return 0;
     const inKeys = graph.inboundIndex.get(relativePath);
-    if (!inKeys) return 0;
-    let total = 0;
-    for (const key of inKeys) {
-      const edge = graph.edges.get(key);
-      if (edge) total += edge.count;
-    }
-    return total;
+    return inKeys ? inKeys.size : 0;
   }
 
-  private matchPhrasesAgainstTitles(
-    sourcePath: string,
-    phrases: Map<string, number>,
-    titleIndex: Map<string, Set<string>>,
-  ): Edge[] {
-    const sourceBasename = this.titleFromPath(sourcePath);
-    const edgeMap = new Map<string, Edge>();
-
-    for (const [phrase, count] of phrases) {
-      const matchingPaths = titleIndex.get(phrase);
-      if (!matchingPaths) continue;
-
-      for (const targetPath of matchingPaths) {
-        // Self-link exclusion
-        if (targetPath === sourcePath) continue;
-
-        const key = `${sourcePath}::${targetPath}`;
-        const existing = edgeMap.get(key);
-        if (existing) {
-          existing.count += count;
-          if (count > (phrases.get(existing.noun) ?? 0)) {
-            existing.noun = phrase;
-          }
-        } else {
-          edgeMap.set(key, {
-            source: sourcePath,
-            target: targetPath,
-            noun: phrase,
-            count,
-          });
-        }
-      }
-    }
-
-    return Array.from(edgeMap.values());
+  titleFromPath(relativePath: string): string {
+    return path.basename(relativePath, '.md').toLowerCase();
   }
 
   private addEdge(graph: LinkGraph, edge: Edge): void {
@@ -330,25 +229,5 @@ export class LinkGraphService {
       graph.edges.delete(key);
     }
     graph.inboundIndex.delete(targetPath);
-  }
-
-  titleFromPath(relativePath: string): string {
-    return path.basename(relativePath, '.md').toLowerCase();
-  }
-
-  /**
-   * Returns all title variants for a file path, used for titleIndex registration and matching.
-   * For "something/overview.md" returns ["overview", "something overview"].
-   * For root-level "overview.md" returns ["overview"].
-   */
-  private titlesFromPath(relativePath: string): string[] {
-    const basename = path.basename(relativePath, '.md').toLowerCase();
-    const dir = path.dirname(relativePath);
-    const titles = [basename];
-    if (dir && dir !== '.') {
-      const parentDir = path.basename(dir).toLowerCase();
-      titles.push(`${parentDir} ${basename}`);
-    }
-    return titles;
   }
 }

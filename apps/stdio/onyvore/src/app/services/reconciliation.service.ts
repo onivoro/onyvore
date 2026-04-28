@@ -8,6 +8,7 @@ import { SearchIndexService } from './search-index.service';
 import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
+import { TfidfService } from './tfidf.service';
 
 interface ScannedFile {
   relativePath: string;
@@ -23,6 +24,7 @@ export class ReconciliationService {
     private readonly linkGraphService: LinkGraphService,
     private readonly metadataService: MetadataService,
     private readonly persistenceService: PersistenceService,
+    private readonly tfidfService: TfidfService,
   ) {}
 
   async reconcile(notebookId: string): Promise<void> {
@@ -60,15 +62,20 @@ export class ReconciliationService {
 
     let processed = 0;
 
-    // Process deletes first
+    // Phase 1: Process deletes first (update corpus before computing edges)
     for (const relPath of deleted) {
-      this.processDelete(notebookId, relPath);
+      this.tfidfService.removeDocument(notebookId, relPath);
+      this.linkGraphService.removeAllEdgesForFile(notebookId, relPath);
+      this.linkGraphService.unregisterFile(notebookId, relPath);
+      this.metadataService.removeFile(notebookId, relPath);
+      this.searchIndexService.removeDocument(notebookId, relPath).catch(() => {});
       processed++;
       this.sendProgress(notebookId, processed, total);
     }
 
-    // Then creates and modifications
-    for (const relPath of [...created, ...modified]) {
+    // Phase 2: Extract terms for all creates/changes (update corpus before edge computation)
+    const changedPaths = [...created, ...modified];
+    for (const relPath of changedPaths) {
       const content = await this.readFile(notebookId, relPath);
       const stat = await this.statFile(notebookId, relPath);
       const title = this.searchTitleFromPath(relPath);
@@ -76,13 +83,20 @@ export class ReconciliationService {
 
       if (isCreate) {
         await this.searchIndexService.addDocument(notebookId, relPath, title, content);
-        this.linkGraphService.processCreate(notebookId, relPath, content);
       } else {
         await this.searchIndexService.updateDocument(notebookId, relPath, title, content);
-        this.linkGraphService.processChange(notebookId, relPath, content);
       }
 
+      const terms = this.nlpService.extractTerms(content);
+      this.tfidfService.setDocument(notebookId, relPath, terms);
+      this.linkGraphService.registerFile(notebookId, relPath);
       this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
+    }
+
+    // Phase 3: Compute edges for each changed file (IDF is current after phase 2)
+    for (const relPath of changedPaths) {
+      const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+      this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
       processed++;
       this.sendProgress(notebookId, processed, total);
     }
@@ -98,6 +112,7 @@ export class ReconciliationService {
     const total = files.length;
     let processed = 0;
 
+    // Phase 1: Extract terms for all files and register in TF-IDF corpus
     for (const file of files) {
       const content = await this.readFile(notebookId, file.relativePath);
       const title = this.searchTitleFromPath(file.relativePath);
@@ -108,7 +123,10 @@ export class ReconciliationService {
         title,
         content,
       );
-      this.linkGraphService.processCreate(notebookId, file.relativePath, content);
+
+      const terms = this.nlpService.extractTerms(content);
+      this.tfidfService.setDocument(notebookId, file.relativePath, terms);
+      this.linkGraphService.registerFile(notebookId, file.relativePath);
       this.metadataService.setFile(notebookId, file.relativePath, file.mtimeMs);
 
       processed++;
@@ -116,23 +134,22 @@ export class ReconciliationService {
         this.sendInitProgress(notebookId, processed, total);
       }
 
-      // Checkpoint every 100 files
+      // Checkpoint every 100 files (search index + metadata, not links yet)
       if (processed % 100 === 0) {
-        await this.persistenceService.persistAll(notebookId);
+        await this.persistenceService.persistIndex(notebookId);
+        await this.persistenceService.persistMetadata(notebookId);
+        await this.persistenceService.persistTfidf(notebookId);
       }
     }
+
+    // Phase 2: Compute all edges at once (IDF needs full corpus)
+    const edges = this.tfidfService.computeAllEdges(notebookId);
+    this.linkGraphService.replaceAllEdges(notebookId, edges);
 
     await this.persistenceService.persistAll(notebookId);
     this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_READY, {
       notebookId,
     });
-  }
-
-  private processDelete(notebookId: string, relativePath: string): void {
-    this.linkGraphService.processDelete(notebookId, relativePath);
-    this.metadataService.removeFile(notebookId, relativePath);
-    // Search index removeDocument is async but we fire-and-forget for deletes during reconciliation
-    this.searchIndexService.removeDocument(notebookId, relativePath).catch(() => {});
   }
 
   private async scanFilesystem(notebookId: string): Promise<ScannedFile[]> {

@@ -14,6 +14,7 @@ import { LinkGraphService } from './services/link-graph.service';
 import { MetadataService } from './services/metadata.service';
 import { PersistenceService } from './services/persistence.service';
 import { ReconciliationService } from './services/reconciliation.service';
+import { TfidfService } from './services/tfidf.service';
 
 const config = new AppStdioOnyvoreConfig();
 
@@ -35,6 +36,7 @@ const config = new AppStdioOnyvoreConfig();
     MetadataService,
     PersistenceService,
     ReconciliationService,
+    TfidfService,
   ],
   exports: [StdioMessageBus, MESSAGE_BUS],
 })

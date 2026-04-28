@@ -6,7 +6,6 @@ import {
   onyvoreRpcMethods,
   type FileEventBatch,
   type NotebookInfo,
-  type NotebookFileTree,
   type LinksForNote,
 } from '@onivoro/isomorphic-onyvore';
 import { NlpService } from './nlp.service';
@@ -15,6 +14,7 @@ import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
 import { ReconciliationService } from './reconciliation.service';
+import { TfidfService } from './tfidf.service';
 
 interface RegisteredNotebook {
   id: string;
@@ -36,6 +36,7 @@ export class OnyvoreMessageHandlerService {
     private readonly metadataService: MetadataService,
     private readonly persistenceService: PersistenceService,
     private readonly reconciliationService: ReconciliationService,
+    private readonly tfidfService: TfidfService,
   ) {}
 
   @StdioHandler('health')
@@ -68,6 +69,7 @@ export class OnyvoreMessageHandlerService {
     this.searchIndexService.removeIndex(notebookId);
     this.linkGraphService.removeGraph(notebookId);
     this.metadataService.remove(notebookId);
+    this.tfidfService.removeCorpus(notebookId);
     return { success: true };
   }
 
@@ -104,13 +106,13 @@ export class OnyvoreMessageHandlerService {
 
     notebook.status = 'reconciling';
 
-    // Load persisted state first
+    // Load persisted state (includes TF-IDF corpus from tfidf.json)
     await this.persistenceService.loadAll(notebookId);
 
-    // Re-register titles from metadata for link graph
+    // Register files from metadata for graph orphan detection
     const files = this.metadataService.getAllFiles(notebookId);
     for (const relPath of Object.keys(files)) {
-      this.linkGraphService.registerTitle(notebookId, relPath);
+      this.linkGraphService.registerFile(notebookId, relPath);
     }
 
     // Run reconciliation asynchronously
@@ -151,7 +153,14 @@ export class OnyvoreMessageHandlerService {
             title,
             content,
           );
-          this.linkGraphService.processCreate(notebookId, relativePath, content);
+
+          const terms = this.nlpService.extractTerms(content);
+          this.tfidfService.setDocument(notebookId, relativePath, terms);
+          this.linkGraphService.registerFile(notebookId, relativePath);
+
+          const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+          this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
+
           this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
           break;
         }
@@ -166,13 +175,21 @@ export class OnyvoreMessageHandlerService {
             title,
             content,
           );
-          this.linkGraphService.processChange(notebookId, relativePath, content);
+
+          const terms = this.nlpService.extractTerms(content);
+          this.tfidfService.setDocument(notebookId, relativePath, terms);
+
+          const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+          this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
+
           this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
           break;
         }
         case 'delete': {
           await this.searchIndexService.removeDocument(notebookId, relativePath);
-          this.linkGraphService.processDelete(notebookId, relativePath);
+          this.tfidfService.removeDocument(notebookId, relativePath);
+          this.linkGraphService.removeAllEdgesForFile(notebookId, relativePath);
+          this.linkGraphService.unregisterFile(notebookId, relativePath);
           this.metadataService.removeFile(notebookId, relativePath);
           break;
         }
@@ -202,7 +219,9 @@ export class OnyvoreMessageHandlerService {
     // Remove newly-ignored files
     for (const relPath of ignoredPaths) {
       await this.searchIndexService.removeDocument(notebookId, relPath);
-      this.linkGraphService.processDelete(notebookId, relPath);
+      this.tfidfService.removeDocument(notebookId, relPath);
+      this.linkGraphService.removeAllEdgesForFile(notebookId, relPath);
+      this.linkGraphService.unregisterFile(notebookId, relPath);
       this.metadataService.removeFile(notebookId, relPath);
     }
 
@@ -215,7 +234,14 @@ export class OnyvoreMessageHandlerService {
         const title = this.searchTitleFromPath(relPath);
 
         await this.searchIndexService.addDocument(notebookId, relPath, title, content);
-        this.linkGraphService.processCreate(notebookId, relPath, content);
+
+        const terms = this.nlpService.extractTerms(content);
+        this.tfidfService.setDocument(notebookId, relPath, terms);
+        this.linkGraphService.registerFile(notebookId, relPath);
+
+        const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+        this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
+
         this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
       } catch {
         // File may have been deleted between detection and processing
@@ -304,6 +330,7 @@ export class OnyvoreMessageHandlerService {
     this.searchIndexService.removeIndex(notebookId);
     this.linkGraphService.removeGraph(notebookId);
     this.metadataService.remove(notebookId);
+    this.tfidfService.removeCorpus(notebookId);
 
     // Re-initialize from scratch
     notebook.status = 'initializing';
