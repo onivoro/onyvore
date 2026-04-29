@@ -54,15 +54,40 @@ export function LinksPanel() {
     );
   }
 
+  const hasExplicit = links.explicitOutbound.length > 0 || links.explicitInbound.length > 0;
+  const hasImplicit = links.implicitOutbound.length > 0 || links.implicitInbound.length > 0;
+
+  if (!hasExplicit && !hasImplicit) {
+    return (
+      <div className="ony-empty__hint">No links found for this note.</div>
+    );
+  }
+
   return (
     <>
-      <CollapsibleSection title="Outbound Links" count={links.outbound.length}>
-        <OutboundLinks links={links.outbound} notebookId={notebookId} />
-      </CollapsibleSection>
+      {hasExplicit && (
+        <>
+          <CollapsibleSection title="Outbound Links" count={links.explicitOutbound.length}>
+            <OutboundLinks links={links.explicitOutbound} notebookId={notebookId} emptyMessage="No outbound links" />
+          </CollapsibleSection>
 
-      <CollapsibleSection title="Backlinks" count={links.inbound.length}>
-        <InboundLinks links={links.inbound} notebookId={notebookId} />
-      </CollapsibleSection>
+          <CollapsibleSection title="Backlinks" count={links.explicitInbound.length}>
+            <InboundLinks links={links.explicitInbound} notebookId={notebookId} emptyMessage="No backlinks" />
+          </CollapsibleSection>
+        </>
+      )}
+
+      {hasImplicit && (
+        <>
+          <CollapsibleSection title="Related Notes" count={links.implicitOutbound.length} defaultOpen={!hasExplicit}>
+            <OutboundLinks links={links.implicitOutbound} notebookId={notebookId} emptyMessage="No related notes" />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Related Backlinks" count={links.implicitInbound.length} defaultOpen={false}>
+            <InboundLinks links={links.implicitInbound} notebookId={notebookId} emptyMessage="No related backlinks" />
+          </CollapsibleSection>
+        </>
+      )}
     </>
   );
 }

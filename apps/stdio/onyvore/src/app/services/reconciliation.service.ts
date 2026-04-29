@@ -9,6 +9,7 @@ import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
 import { TfidfService } from './tfidf.service';
+import { WikilinkService } from './wikilink.service';
 
 interface ScannedFile {
   relativePath: string;
@@ -25,6 +26,7 @@ export class ReconciliationService {
     private readonly metadataService: MetadataService,
     private readonly persistenceService: PersistenceService,
     private readonly tfidfService: TfidfService,
+    private readonly wikilinkService: WikilinkService,
   ) {}
 
   async reconcile(notebookId: string): Promise<void> {
@@ -75,8 +77,10 @@ export class ReconciliationService {
 
     // Phase 2: Extract terms for all creates/changes (update corpus before edge computation)
     const changedPaths = [...created, ...modified];
+    const contentCache = new Map<string, string>();
     for (const relPath of changedPaths) {
       const content = await this.readFile(notebookId, relPath);
+      contentCache.set(relPath, content);
       const stat = await this.statFile(notebookId, relPath);
       const title = this.searchTitleFromPath(relPath);
       const isCreate = created.includes(relPath);
@@ -93,10 +97,15 @@ export class ReconciliationService {
       this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
     }
 
-    // Phase 3: Compute edges for each changed file (IDF is current after phase 2)
+    // Phase 3: Compute implicit + explicit edges for each changed file
     for (const relPath of changedPaths) {
-      const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
-      this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
+      const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+      this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relPath, implicitEdges);
+
+      const content = contentCache.get(relPath)!;
+      const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relPath, content);
+      this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relPath, explicitEdges);
+
       processed++;
       this.sendProgress(notebookId, processed, total);
     }
@@ -113,8 +122,10 @@ export class ReconciliationService {
     let processed = 0;
 
     // Phase 1: Extract terms for all files and register in TF-IDF corpus
+    const contentCache = new Map<string, string>();
     for (const file of files) {
       const content = await this.readFile(notebookId, file.relativePath);
+      contentCache.set(file.relativePath, content);
       const title = this.searchTitleFromPath(file.relativePath);
 
       await this.searchIndexService.addDocument(
@@ -142,9 +153,26 @@ export class ReconciliationService {
       }
     }
 
-    // Phase 2: Compute all edges at once (IDF needs full corpus)
-    const edges = this.tfidfService.computeAllEdges(notebookId);
-    this.linkGraphService.replaceAllEdges(notebookId, edges);
+    // Phase 2: Compute all implicit edges at once (IDF needs full corpus)
+    const implicitEdges = this.tfidfService.computeAllEdges(notebookId);
+    this.linkGraphService.replaceAllImplicitEdges(notebookId, implicitEdges);
+
+    // Phase 3: Extract explicit wikilink edges (metadata is fully registered now)
+    for (const file of files) {
+      const content = contentCache.get(file.relativePath)!;
+      const explicitEdges = this.wikilinkService.extractAndResolve(
+        notebookId,
+        file.relativePath,
+        content,
+      );
+      if (explicitEdges.length > 0) {
+        this.linkGraphService.replaceExplicitEdgesForFile(
+          notebookId,
+          file.relativePath,
+          explicitEdges,
+        );
+      }
+    }
 
     await this.persistenceService.persistAll(notebookId);
     this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_READY, {

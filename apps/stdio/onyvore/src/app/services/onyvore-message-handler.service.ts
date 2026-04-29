@@ -15,6 +15,7 @@ import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
 import { ReconciliationService } from './reconciliation.service';
 import { TfidfService } from './tfidf.service';
+import { WikilinkService } from './wikilink.service';
 
 interface RegisteredNotebook {
   id: string;
@@ -37,6 +38,7 @@ export class OnyvoreMessageHandlerService {
     private readonly persistenceService: PersistenceService,
     private readonly reconciliationService: ReconciliationService,
     private readonly tfidfService: TfidfService,
+    private readonly wikilinkService: WikilinkService,
   ) {}
 
   @StdioHandler('health')
@@ -158,8 +160,11 @@ export class OnyvoreMessageHandlerService {
           this.tfidfService.setDocument(notebookId, relativePath, terms);
           this.linkGraphService.registerFile(notebookId, relativePath);
 
-          const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
-          this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
+          const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+          this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relativePath, implicitEdges);
+
+          const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relativePath, content);
+          this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relativePath, explicitEdges);
 
           this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
           break;
@@ -179,8 +184,11 @@ export class OnyvoreMessageHandlerService {
           const terms = this.nlpService.extractTerms(content);
           this.tfidfService.setDocument(notebookId, relativePath, terms);
 
-          const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
-          this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
+          const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+          this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relativePath, implicitEdges);
+
+          const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relativePath, content);
+          this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relativePath, explicitEdges);
 
           this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
           break;
@@ -239,8 +247,11 @@ export class OnyvoreMessageHandlerService {
         this.tfidfService.setDocument(notebookId, relPath, terms);
         this.linkGraphService.registerFile(notebookId, relPath);
 
-        const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
-        this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
+        const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+        this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relPath, implicitEdges);
+
+        const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relPath, content);
+        this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relPath, explicitEdges);
 
         this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
       } catch {

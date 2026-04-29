@@ -15,6 +15,7 @@ import { MetadataService } from './services/metadata.service';
 import { PersistenceService } from './services/persistence.service';
 import { ReconciliationService } from './services/reconciliation.service';
 import { TfidfService } from './services/tfidf.service';
+import { WikilinkService } from './services/wikilink.service';
 
 const config = new AppStdioOnyvoreConfig();
 
@@ -37,6 +38,7 @@ const config = new AppStdioOnyvoreConfig();
     PersistenceService,
     ReconciliationService,
     TfidfService,
+    WikilinkService,
   ],
   exports: [StdioMessageBus, MESSAGE_BUS],
 })

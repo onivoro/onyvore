@@ -130,8 +130,8 @@ export class TfidfService {
       if (similarity >= threshold && topTerm) {
         const count = Math.round(similarity * 100);
         edges.push(
-          { source: filePath, target: otherPath, noun: topTerm, count },
-          { source: otherPath, target: filePath, noun: topTerm, count },
+          { source: filePath, target: otherPath, type: 'implicit', noun: topTerm, count },
+          { source: otherPath, target: filePath, type: 'implicit', noun: topTerm, count },
         );
       }
     }
@@ -178,8 +178,8 @@ export class TfidfService {
         if (similarity >= threshold && topTerm) {
           const count = Math.round(similarity * 100);
           edges.push(
-            { source: a.path, target: b.path, noun: topTerm, count },
-            { source: b.path, target: a.path, noun: topTerm, count },
+            { source: a.path, target: b.path, type: 'implicit', noun: topTerm, count },
+            { source: b.path, target: a.path, type: 'implicit', noun: topTerm, count },
           );
         }
       }

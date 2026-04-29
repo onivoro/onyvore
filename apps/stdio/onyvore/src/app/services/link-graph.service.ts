@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Edge, LinksForNote, LinkEntry } from '@onivoro/isomorphic-onyvore';
+import type { Edge, EdgeType, LinksForNote, LinkEntry } from '@onivoro/isomorphic-onyvore';
 import * as path from 'path';
 
 interface LinkGraph {
@@ -47,47 +47,49 @@ export class LinkGraphService {
   }
 
   /**
-   * Replace ALL edges involving a given file (both outbound AND inbound)
+   * Replace all implicit edges involving a given file (both outbound AND inbound)
    * with the provided edge set. Called after TfidfService.computeEdgesForDocument().
    */
-  replaceEdgesForFile(notebookId: string, filePath: string, edges: Edge[]): void {
+  replaceImplicitEdgesForFile(notebookId: string, filePath: string, edges: Edge[]): void {
     const graph = this.getOrCreateGraph(notebookId);
-
-    // Remove all existing edges where this file is source or target
-    this.removeOutboundEdges(graph, filePath);
-    this.removeInboundEdges(graph, filePath);
-
-    // Insert the new edge set
+    this.removeOutboundEdgesByType(graph, filePath, 'implicit');
+    this.removeInboundEdgesByType(graph, filePath, 'implicit');
     for (const edge of edges) {
       this.addEdge(graph, edge);
     }
   }
 
   /**
-   * Replace ALL edges in the graph. Used during full initialization
+   * Replace only explicit outbound edges from a file.
+   * Called after WikilinkService.extractAndResolve().
+   * Only removes outbound (directional: the source file owns its [[]] links).
+   */
+  replaceExplicitEdgesForFile(notebookId: string, filePath: string, edges: Edge[]): void {
+    const graph = this.getOrCreateGraph(notebookId);
+    this.removeOutboundEdgesByType(graph, filePath, 'explicit');
+    for (const edge of edges) {
+      this.addEdge(graph, edge);
+    }
+  }
+
+  /**
+   * Replace all implicit edges in the graph. Used during full initialization
    * after TfidfService.computeAllEdges().
    */
-  replaceAllEdges(notebookId: string, edges: Edge[]): void {
+  replaceAllImplicitEdges(notebookId: string, edges: Edge[]): void {
     const graph = this.getOrCreateGraph(notebookId);
-
-    // Clear all edge state
-    graph.edges.clear();
-    graph.outboundIndex.clear();
-    graph.inboundIndex.clear();
-
-    // Insert all new edges
+    this.removeAllEdgesByType(graph, 'implicit');
     for (const edge of edges) {
       this.addEdge(graph, edge);
     }
   }
 
   /**
-   * Remove all edges involving a file. Called on file delete.
+   * Remove all edges involving a file (both types). Called on file delete.
    */
   removeAllEdgesForFile(notebookId: string, filePath: string): void {
     const graph = this.graphs.get(notebookId);
     if (!graph) return;
-
     this.removeOutboundEdges(graph, filePath);
     this.removeInboundEdges(graph, filePath);
   }
@@ -95,44 +97,72 @@ export class LinkGraphService {
   getLinksForNote(notebookId: string, relativePath: string): LinksForNote {
     const graph = this.graphs.get(notebookId);
     if (!graph) {
-      return { notePath: relativePath, outbound: [], inbound: [] };
+      return {
+        notePath: relativePath,
+        explicitOutbound: [],
+        explicitInbound: [],
+        implicitOutbound: [],
+        implicitInbound: [],
+      };
     }
 
-    const outbound: LinkEntry[] = [];
+    const explicitOutbound: LinkEntry[] = [];
+    const implicitOutbound: LinkEntry[] = [];
     const outKeys = graph.outboundIndex.get(relativePath);
     if (outKeys) {
       for (const key of outKeys) {
         const edge = graph.edges.get(key);
-        if (edge) {
-          outbound.push({
-            notePath: edge.target,
-            noteTitle: this.titleFromPath(edge.target),
-            noun: edge.noun,
-            count: edge.count,
-          });
+        if (!edge) continue;
+        const entry: LinkEntry = {
+          notePath: edge.target,
+          noteTitle: this.titleFromPath(edge.target),
+          type: edge.type,
+          noun: edge.noun,
+          displayText: edge.displayText,
+          count: edge.count,
+        };
+        if (edge.type === 'explicit') {
+          explicitOutbound.push(entry);
+        } else {
+          implicitOutbound.push(entry);
         }
       }
     }
-    outbound.sort((a, b) => b.count - a.count);
+    explicitOutbound.sort((a, b) => a.noteTitle.localeCompare(b.noteTitle));
+    implicitOutbound.sort((a, b) => b.count - a.count);
 
-    const inbound: LinkEntry[] = [];
+    const explicitInbound: LinkEntry[] = [];
+    const implicitInbound: LinkEntry[] = [];
     const inKeys = graph.inboundIndex.get(relativePath);
     if (inKeys) {
       for (const key of inKeys) {
         const edge = graph.edges.get(key);
-        if (edge) {
-          inbound.push({
-            notePath: edge.source,
-            noteTitle: this.titleFromPath(edge.source),
-            noun: edge.noun,
-            count: edge.count,
-          });
+        if (!edge) continue;
+        const entry: LinkEntry = {
+          notePath: edge.source,
+          noteTitle: this.titleFromPath(edge.source),
+          type: edge.type,
+          noun: edge.noun,
+          displayText: edge.displayText,
+          count: edge.count,
+        };
+        if (edge.type === 'explicit') {
+          explicitInbound.push(entry);
+        } else {
+          implicitInbound.push(entry);
         }
       }
     }
-    inbound.sort((a, b) => b.count - a.count);
+    explicitInbound.sort((a, b) => a.noteTitle.localeCompare(b.noteTitle));
+    implicitInbound.sort((a, b) => b.count - a.count);
 
-    return { notePath: relativePath, outbound, inbound };
+    return {
+      notePath: relativePath,
+      explicitOutbound,
+      explicitInbound,
+      implicitOutbound,
+      implicitInbound,
+    };
   }
 
   getOrphans(notebookId: string): string[] {
@@ -161,6 +191,10 @@ export class LinkGraphService {
   loadEdges(notebookId: string, edges: Edge[]): void {
     const graph = this.getOrCreateGraph(notebookId);
     for (const edge of edges) {
+      // Backward compat: edges persisted before the type field default to implicit
+      if (!edge.type) {
+        (edge as any).type = 'implicit';
+      }
       this.addEdge(graph, edge);
     }
   }
@@ -180,8 +214,13 @@ export class LinkGraphService {
     return path.basename(relativePath, '.md').toLowerCase();
   }
 
+  private edgeKey(edge: Edge): string {
+    const type = edge.type || 'implicit';
+    return `${type}::${edge.source}::${edge.target}`;
+  }
+
   private addEdge(graph: LinkGraph, edge: Edge): void {
-    const key = `${edge.source}::${edge.target}`;
+    const key = this.edgeKey(edge);
     graph.edges.set(key, edge);
 
     if (!graph.outboundIndex.has(edge.source)) {
@@ -229,5 +268,92 @@ export class LinkGraphService {
       graph.edges.delete(key);
     }
     graph.inboundIndex.delete(targetPath);
+  }
+
+  private removeOutboundEdgesByType(
+    graph: LinkGraph,
+    sourcePath: string,
+    type: EdgeType,
+  ): void {
+    const outKeys = graph.outboundIndex.get(sourcePath);
+    if (!outKeys) return;
+
+    const toRemove: string[] = [];
+    for (const key of outKeys) {
+      const edge = graph.edges.get(key);
+      if (edge && edge.type === type) {
+        toRemove.push(key);
+      }
+    }
+
+    for (const key of toRemove) {
+      const edge = graph.edges.get(key)!;
+      outKeys.delete(key);
+      const inKeys = graph.inboundIndex.get(edge.target);
+      if (inKeys) {
+        inKeys.delete(key);
+        if (inKeys.size === 0) graph.inboundIndex.delete(edge.target);
+      }
+      graph.edges.delete(key);
+    }
+
+    if (outKeys.size === 0) graph.outboundIndex.delete(sourcePath);
+  }
+
+  private removeInboundEdgesByType(
+    graph: LinkGraph,
+    targetPath: string,
+    type: EdgeType,
+  ): void {
+    const inKeys = graph.inboundIndex.get(targetPath);
+    if (!inKeys) return;
+
+    const toRemove: string[] = [];
+    for (const key of inKeys) {
+      const edge = graph.edges.get(key);
+      if (edge && edge.type === type) {
+        toRemove.push(key);
+      }
+    }
+
+    for (const key of toRemove) {
+      const edge = graph.edges.get(key)!;
+      inKeys.delete(key);
+      const outKeys = graph.outboundIndex.get(edge.source);
+      if (outKeys) {
+        outKeys.delete(key);
+        if (outKeys.size === 0) graph.outboundIndex.delete(edge.source);
+      }
+      graph.edges.delete(key);
+    }
+
+    if (inKeys.size === 0) graph.inboundIndex.delete(targetPath);
+  }
+
+  private removeAllEdgesByType(graph: LinkGraph, type: EdgeType): void {
+    const toRemove: string[] = [];
+    for (const [key, edge] of graph.edges) {
+      if (edge.type === type) {
+        toRemove.push(key);
+      }
+    }
+
+    for (const key of toRemove) {
+      const edge = graph.edges.get(key)!;
+
+      const outKeys = graph.outboundIndex.get(edge.source);
+      if (outKeys) {
+        outKeys.delete(key);
+        if (outKeys.size === 0) graph.outboundIndex.delete(edge.source);
+      }
+
+      const inKeys = graph.inboundIndex.get(edge.target);
+      if (inKeys) {
+        inKeys.delete(key);
+        if (inKeys.size === 0) graph.inboundIndex.delete(edge.target);
+      }
+
+      graph.edges.delete(key);
+    }
   }
 }

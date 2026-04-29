@@ -40,7 +40,7 @@ jobs:
 
       - name: Build VSIX
         if: steps.version_check.outputs.changed == 'true'
-        run: npm run onyvore:vsix
+        run: npm run onyvore:vsix 
 
       - name: Publish to Marketplace
         if: steps.version_check.outputs.changed == 'true'

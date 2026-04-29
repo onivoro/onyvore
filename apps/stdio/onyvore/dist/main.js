@@ -30116,6 +30116,7 @@ const metadata_service_1 = __webpack_require__(710);
 const persistence_service_1 = __webpack_require__(711);
 const reconciliation_service_1 = __webpack_require__(714);
 const tfidf_service_1 = __webpack_require__(713);
+const wikilink_service_1 = __webpack_require__(715);
 const config = new app_stdio_onyvore_config_class_1.AppStdioOnyvoreConfig();
 let AppStdioOnyvoreModule = class AppStdioOnyvoreModule {
 };
@@ -30139,6 +30140,7 @@ exports.AppStdioOnyvoreModule = AppStdioOnyvoreModule = tslib_1.__decorate([
             persistence_service_1.PersistenceService,
             reconciliation_service_1.ReconciliationService,
             tfidf_service_1.TfidfService,
+            wikilink_service_1.WikilinkService,
         ],
         exports: [server_stdio_1.StdioMessageBus, isomorphic_jsonrpc_1.MESSAGE_BUS],
     })
@@ -30166,7 +30168,7 @@ exports.AppStdioOnyvoreConfig = AppStdioOnyvoreConfig;
 
 "use strict";
 
-var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
+var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.OnyvoreMessageHandlerService = void 0;
 const tslib_1 = __webpack_require__(3);
@@ -30182,6 +30184,7 @@ const metadata_service_1 = __webpack_require__(710);
 const persistence_service_1 = __webpack_require__(711);
 const reconciliation_service_1 = __webpack_require__(714);
 const tfidf_service_1 = __webpack_require__(713);
+const wikilink_service_1 = __webpack_require__(715);
 let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
     messageBus;
     nlpService;
@@ -30191,8 +30194,9 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
     persistenceService;
     reconciliationService;
     tfidfService;
+    wikilinkService;
     notebooks = new Map();
-    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, reconciliationService, tfidfService) {
+    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, reconciliationService, tfidfService, wikilinkService) {
         this.messageBus = messageBus;
         this.nlpService = nlpService;
         this.searchIndexService = searchIndexService;
@@ -30201,6 +30205,7 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
         this.persistenceService = persistenceService;
         this.reconciliationService = reconciliationService;
         this.tfidfService = tfidfService;
+        this.wikilinkService = wikilinkService;
     }
     async health() {
         return { status: 'ok', timestamp: new Date().toISOString() };
@@ -30285,8 +30290,10 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
                     const terms = this.nlpService.extractTerms(content);
                     this.tfidfService.setDocument(notebookId, relativePath, terms);
                     this.linkGraphService.registerFile(notebookId, relativePath);
-                    const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
-                    this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
+                    const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+                    this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relativePath, implicitEdges);
+                    const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relativePath, content);
+                    this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relativePath, explicitEdges);
                     this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
                     break;
                 }
@@ -30297,8 +30304,10 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
                     await this.searchIndexService.updateDocument(notebookId, relativePath, title, content);
                     const terms = this.nlpService.extractTerms(content);
                     this.tfidfService.setDocument(notebookId, relativePath, terms);
-                    const edges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
-                    this.linkGraphService.replaceEdgesForFile(notebookId, relativePath, edges);
+                    const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
+                    this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relativePath, implicitEdges);
+                    const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relativePath, content);
+                    this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relativePath, explicitEdges);
                     this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
                     break;
                 }
@@ -30342,8 +30351,10 @@ let OnyvoreMessageHandlerService = class OnyvoreMessageHandlerService {
                 const terms = this.nlpService.extractTerms(content);
                 this.tfidfService.setDocument(notebookId, relPath, terms);
                 this.linkGraphService.registerFile(notebookId, relPath);
-                const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
-                this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
+                const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+                this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relPath, implicitEdges);
+                const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relPath, content);
+                this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relPath, explicitEdges);
                 this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
             }
             catch {
@@ -30430,78 +30441,78 @@ tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)('health'),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", []),
-    tslib_1.__metadata("design:returntype", typeof (_j = typeof Promise !== "undefined" && Promise) === "function" ? _j : Object)
+    tslib_1.__metadata("design:returntype", typeof (_k = typeof Promise !== "undefined" && Promise) === "function" ? _k : Object)
 ], OnyvoreMessageHandlerService.prototype, "health", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_REGISTER),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_k = typeof Promise !== "undefined" && Promise) === "function" ? _k : Object)
+    tslib_1.__metadata("design:returntype", typeof (_l = typeof Promise !== "undefined" && Promise) === "function" ? _l : Object)
 ], OnyvoreMessageHandlerService.prototype, "registerNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_UNREGISTER),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_l = typeof Promise !== "undefined" && Promise) === "function" ? _l : Object)
+    tslib_1.__metadata("design:returntype", typeof (_m = typeof Promise !== "undefined" && Promise) === "function" ? _m : Object)
 ], OnyvoreMessageHandlerService.prototype, "unregisterNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_INITIALIZE),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_m = typeof Promise !== "undefined" && Promise) === "function" ? _m : Object)
+    tslib_1.__metadata("design:returntype", typeof (_o = typeof Promise !== "undefined" && Promise) === "function" ? _o : Object)
 ], OnyvoreMessageHandlerService.prototype, "initializeNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_RECONCILE),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_o = typeof Promise !== "undefined" && Promise) === "function" ? _o : Object)
+    tslib_1.__metadata("design:returntype", typeof (_p = typeof Promise !== "undefined" && Promise) === "function" ? _p : Object)
 ], OnyvoreMessageHandlerService.prototype, "reconcileNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_FILE_EVENT),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_p = typeof Promise !== "undefined" && Promise) === "function" ? _p : Object)
+    tslib_1.__metadata("design:returntype", typeof (_q = typeof Promise !== "undefined" && Promise) === "function" ? _q : Object)
 ], OnyvoreMessageHandlerService.prototype, "handleFileEvent", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_q = typeof Promise !== "undefined" && Promise) === "function" ? _q : Object)
+    tslib_1.__metadata("design:returntype", typeof (_r = typeof Promise !== "undefined" && Promise) === "function" ? _r : Object)
 ], OnyvoreMessageHandlerService.prototype, "handleIgnoreChanged", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_SEARCH),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_r = typeof Promise !== "undefined" && Promise) === "function" ? _r : Object)
+    tslib_1.__metadata("design:returntype", typeof (_s = typeof Promise !== "undefined" && Promise) === "function" ? _s : Object)
 ], OnyvoreMessageHandlerService.prototype, "searchNotebook", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_GET_LINKS),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_s = typeof Promise !== "undefined" && Promise) === "function" ? _s : Object)
+    tslib_1.__metadata("design:returntype", typeof (_t = typeof Promise !== "undefined" && Promise) === "function" ? _t : Object)
 ], OnyvoreMessageHandlerService.prototype, "getLinks", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_GET_NOTEBOOKS),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", []),
-    tslib_1.__metadata("design:returntype", typeof (_t = typeof Promise !== "undefined" && Promise) === "function" ? _t : Object)
+    tslib_1.__metadata("design:returntype", typeof (_u = typeof Promise !== "undefined" && Promise) === "function" ? _u : Object)
 ], OnyvoreMessageHandlerService.prototype, "getNotebooks", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_GET_ORPHANS),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_u = typeof Promise !== "undefined" && Promise) === "function" ? _u : Object)
+    tslib_1.__metadata("design:returntype", typeof (_v = typeof Promise !== "undefined" && Promise) === "function" ? _v : Object)
 ], OnyvoreMessageHandlerService.prototype, "getOrphans", null);
 tslib_1.__decorate([
     (0, server_stdio_1.StdioHandler)(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_REBUILD),
     tslib_1.__metadata("design:type", Function),
     tslib_1.__metadata("design:paramtypes", [Object]),
-    tslib_1.__metadata("design:returntype", typeof (_v = typeof Promise !== "undefined" && Promise) === "function" ? _v : Object)
+    tslib_1.__metadata("design:returntype", typeof (_w = typeof Promise !== "undefined" && Promise) === "function" ? _w : Object)
 ], OnyvoreMessageHandlerService.prototype, "rebuildNotebook", null);
 exports.OnyvoreMessageHandlerService = OnyvoreMessageHandlerService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
     tslib_1.__param(0, (0, common_1.Inject)(isomorphic_jsonrpc_1.MESSAGE_BUS)),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof reconciliation_service_1.ReconciliationService !== "undefined" && reconciliation_service_1.ReconciliationService) === "function" ? _g : Object, typeof (_h = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _h : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof reconciliation_service_1.ReconciliationService !== "undefined" && reconciliation_service_1.ReconciliationService) === "function" ? _g : Object, typeof (_h = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _h : Object, typeof (_j = typeof wikilink_service_1.WikilinkService !== "undefined" && wikilink_service_1.WikilinkService) === "function" ? _j : Object])
 ], OnyvoreMessageHandlerService);
 
 
@@ -37523,36 +37534,42 @@ let LinkGraphService = class LinkGraphService {
         }
     }
     /**
-     * Replace ALL edges involving a given file (both outbound AND inbound)
+     * Replace all implicit edges involving a given file (both outbound AND inbound)
      * with the provided edge set. Called after TfidfService.computeEdgesForDocument().
      */
-    replaceEdgesForFile(notebookId, filePath, edges) {
+    replaceImplicitEdgesForFile(notebookId, filePath, edges) {
         const graph = this.getOrCreateGraph(notebookId);
-        // Remove all existing edges where this file is source or target
-        this.removeOutboundEdges(graph, filePath);
-        this.removeInboundEdges(graph, filePath);
-        // Insert the new edge set
+        this.removeOutboundEdgesByType(graph, filePath, 'implicit');
+        this.removeInboundEdgesByType(graph, filePath, 'implicit');
         for (const edge of edges) {
             this.addEdge(graph, edge);
         }
     }
     /**
-     * Replace ALL edges in the graph. Used during full initialization
+     * Replace only explicit outbound edges from a file.
+     * Called after WikilinkService.extractAndResolve().
+     * Only removes outbound (directional: the source file owns its [[]] links).
+     */
+    replaceExplicitEdgesForFile(notebookId, filePath, edges) {
+        const graph = this.getOrCreateGraph(notebookId);
+        this.removeOutboundEdgesByType(graph, filePath, 'explicit');
+        for (const edge of edges) {
+            this.addEdge(graph, edge);
+        }
+    }
+    /**
+     * Replace all implicit edges in the graph. Used during full initialization
      * after TfidfService.computeAllEdges().
      */
-    replaceAllEdges(notebookId, edges) {
+    replaceAllImplicitEdges(notebookId, edges) {
         const graph = this.getOrCreateGraph(notebookId);
-        // Clear all edge state
-        graph.edges.clear();
-        graph.outboundIndex.clear();
-        graph.inboundIndex.clear();
-        // Insert all new edges
+        this.removeAllEdgesByType(graph, 'implicit');
         for (const edge of edges) {
             this.addEdge(graph, edge);
         }
     }
     /**
-     * Remove all edges involving a file. Called on file delete.
+     * Remove all edges involving a file (both types). Called on file delete.
      */
     removeAllEdgesForFile(notebookId, filePath) {
         const graph = this.graphs.get(notebookId);
@@ -37564,41 +37581,73 @@ let LinkGraphService = class LinkGraphService {
     getLinksForNote(notebookId, relativePath) {
         const graph = this.graphs.get(notebookId);
         if (!graph) {
-            return { notePath: relativePath, outbound: [], inbound: [] };
+            return {
+                notePath: relativePath,
+                explicitOutbound: [],
+                explicitInbound: [],
+                implicitOutbound: [],
+                implicitInbound: [],
+            };
         }
-        const outbound = [];
+        const explicitOutbound = [];
+        const implicitOutbound = [];
         const outKeys = graph.outboundIndex.get(relativePath);
         if (outKeys) {
             for (const key of outKeys) {
                 const edge = graph.edges.get(key);
-                if (edge) {
-                    outbound.push({
-                        notePath: edge.target,
-                        noteTitle: this.titleFromPath(edge.target),
-                        noun: edge.noun,
-                        count: edge.count,
-                    });
+                if (!edge)
+                    continue;
+                const entry = {
+                    notePath: edge.target,
+                    noteTitle: this.titleFromPath(edge.target),
+                    type: edge.type,
+                    noun: edge.noun,
+                    displayText: edge.displayText,
+                    count: edge.count,
+                };
+                if (edge.type === 'explicit') {
+                    explicitOutbound.push(entry);
+                }
+                else {
+                    implicitOutbound.push(entry);
                 }
             }
         }
-        outbound.sort((a, b) => b.count - a.count);
-        const inbound = [];
+        explicitOutbound.sort((a, b) => a.noteTitle.localeCompare(b.noteTitle));
+        implicitOutbound.sort((a, b) => b.count - a.count);
+        const explicitInbound = [];
+        const implicitInbound = [];
         const inKeys = graph.inboundIndex.get(relativePath);
         if (inKeys) {
             for (const key of inKeys) {
                 const edge = graph.edges.get(key);
-                if (edge) {
-                    inbound.push({
-                        notePath: edge.source,
-                        noteTitle: this.titleFromPath(edge.source),
-                        noun: edge.noun,
-                        count: edge.count,
-                    });
+                if (!edge)
+                    continue;
+                const entry = {
+                    notePath: edge.source,
+                    noteTitle: this.titleFromPath(edge.source),
+                    type: edge.type,
+                    noun: edge.noun,
+                    displayText: edge.displayText,
+                    count: edge.count,
+                };
+                if (edge.type === 'explicit') {
+                    explicitInbound.push(entry);
+                }
+                else {
+                    implicitInbound.push(entry);
                 }
             }
         }
-        inbound.sort((a, b) => b.count - a.count);
-        return { notePath: relativePath, outbound, inbound };
+        explicitInbound.sort((a, b) => a.noteTitle.localeCompare(b.noteTitle));
+        implicitInbound.sort((a, b) => b.count - a.count);
+        return {
+            notePath: relativePath,
+            explicitOutbound,
+            explicitInbound,
+            implicitOutbound,
+            implicitInbound,
+        };
     }
     getOrphans(notebookId) {
         const graph = this.graphs.get(notebookId);
@@ -37625,6 +37674,10 @@ let LinkGraphService = class LinkGraphService {
     loadEdges(notebookId, edges) {
         const graph = this.getOrCreateGraph(notebookId);
         for (const edge of edges) {
+            // Backward compat: edges persisted before the type field default to implicit
+            if (!edge.type) {
+                edge.type = 'implicit';
+            }
             this.addEdge(graph, edge);
         }
     }
@@ -37642,8 +37695,12 @@ let LinkGraphService = class LinkGraphService {
     titleFromPath(relativePath) {
         return path.basename(relativePath, '.md').toLowerCase();
     }
+    edgeKey(edge) {
+        const type = edge.type || 'implicit';
+        return `${type}::${edge.source}::${edge.target}`;
+    }
     addEdge(graph, edge) {
-        const key = `${edge.source}::${edge.target}`;
+        const key = this.edgeKey(edge);
         graph.edges.set(key, edge);
         if (!graph.outboundIndex.has(edge.source)) {
             graph.outboundIndex.set(edge.source, new Set());
@@ -37689,6 +37746,80 @@ let LinkGraphService = class LinkGraphService {
             graph.edges.delete(key);
         }
         graph.inboundIndex.delete(targetPath);
+    }
+    removeOutboundEdgesByType(graph, sourcePath, type) {
+        const outKeys = graph.outboundIndex.get(sourcePath);
+        if (!outKeys)
+            return;
+        const toRemove = [];
+        for (const key of outKeys) {
+            const edge = graph.edges.get(key);
+            if (edge && edge.type === type) {
+                toRemove.push(key);
+            }
+        }
+        for (const key of toRemove) {
+            const edge = graph.edges.get(key);
+            outKeys.delete(key);
+            const inKeys = graph.inboundIndex.get(edge.target);
+            if (inKeys) {
+                inKeys.delete(key);
+                if (inKeys.size === 0)
+                    graph.inboundIndex.delete(edge.target);
+            }
+            graph.edges.delete(key);
+        }
+        if (outKeys.size === 0)
+            graph.outboundIndex.delete(sourcePath);
+    }
+    removeInboundEdgesByType(graph, targetPath, type) {
+        const inKeys = graph.inboundIndex.get(targetPath);
+        if (!inKeys)
+            return;
+        const toRemove = [];
+        for (const key of inKeys) {
+            const edge = graph.edges.get(key);
+            if (edge && edge.type === type) {
+                toRemove.push(key);
+            }
+        }
+        for (const key of toRemove) {
+            const edge = graph.edges.get(key);
+            inKeys.delete(key);
+            const outKeys = graph.outboundIndex.get(edge.source);
+            if (outKeys) {
+                outKeys.delete(key);
+                if (outKeys.size === 0)
+                    graph.outboundIndex.delete(edge.source);
+            }
+            graph.edges.delete(key);
+        }
+        if (inKeys.size === 0)
+            graph.inboundIndex.delete(targetPath);
+    }
+    removeAllEdgesByType(graph, type) {
+        const toRemove = [];
+        for (const [key, edge] of graph.edges) {
+            if (edge.type === type) {
+                toRemove.push(key);
+            }
+        }
+        for (const key of toRemove) {
+            const edge = graph.edges.get(key);
+            const outKeys = graph.outboundIndex.get(edge.source);
+            if (outKeys) {
+                outKeys.delete(key);
+                if (outKeys.size === 0)
+                    graph.outboundIndex.delete(edge.source);
+            }
+            const inKeys = graph.inboundIndex.get(edge.target);
+            if (inKeys) {
+                inKeys.delete(key);
+                if (inKeys.size === 0)
+                    graph.inboundIndex.delete(edge.target);
+            }
+            graph.edges.delete(key);
+        }
     }
 };
 exports.LinkGraphService = LinkGraphService;
@@ -38031,7 +38162,7 @@ let TfidfService = class TfidfService {
             const similarity = dot / (magA * magB);
             if (similarity >= threshold && topTerm) {
                 const count = Math.round(similarity * 100);
-                edges.push({ source: filePath, target: otherPath, noun: topTerm, count }, { source: otherPath, target: filePath, noun: topTerm, count });
+                edges.push({ source: filePath, target: otherPath, type: 'implicit', noun: topTerm, count }, { source: otherPath, target: filePath, type: 'implicit', noun: topTerm, count });
             }
         }
         return edges;
@@ -38066,7 +38197,7 @@ let TfidfService = class TfidfService {
                 const similarity = dot / (a.mag * b.mag);
                 if (similarity >= threshold && topTerm) {
                     const count = Math.round(similarity * 100);
-                    edges.push({ source: a.path, target: b.path, noun: topTerm, count }, { source: b.path, target: a.path, noun: topTerm, count });
+                    edges.push({ source: a.path, target: b.path, type: 'implicit', noun: topTerm, count }, { source: b.path, target: a.path, type: 'implicit', noun: topTerm, count });
                 }
             }
         }
@@ -38163,7 +38294,7 @@ exports.TfidfService = TfidfService = tslib_1.__decorate([
 
 "use strict";
 
-var _a, _b, _c, _d, _e, _f, _g;
+var _a, _b, _c, _d, _e, _f, _g, _h;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ReconciliationService = void 0;
 const tslib_1 = __webpack_require__(3);
@@ -38178,6 +38309,7 @@ const link_graph_service_1 = __webpack_require__(709);
 const metadata_service_1 = __webpack_require__(710);
 const persistence_service_1 = __webpack_require__(711);
 const tfidf_service_1 = __webpack_require__(713);
+const wikilink_service_1 = __webpack_require__(715);
 let ReconciliationService = class ReconciliationService {
     messageBus;
     nlpService;
@@ -38186,7 +38318,8 @@ let ReconciliationService = class ReconciliationService {
     metadataService;
     persistenceService;
     tfidfService;
-    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, tfidfService) {
+    wikilinkService;
+    constructor(messageBus, nlpService, searchIndexService, linkGraphService, metadataService, persistenceService, tfidfService, wikilinkService) {
         this.messageBus = messageBus;
         this.nlpService = nlpService;
         this.searchIndexService = searchIndexService;
@@ -38194,6 +38327,7 @@ let ReconciliationService = class ReconciliationService {
         this.metadataService = metadataService;
         this.persistenceService = persistenceService;
         this.tfidfService = tfidfService;
+        this.wikilinkService = wikilinkService;
     }
     async reconcile(notebookId) {
         const knownFiles = this.metadataService.getAllFiles(notebookId);
@@ -38236,8 +38370,10 @@ let ReconciliationService = class ReconciliationService {
         }
         // Phase 2: Extract terms for all creates/changes (update corpus before edge computation)
         const changedPaths = [...created, ...modified];
+        const contentCache = new Map();
         for (const relPath of changedPaths) {
             const content = await this.readFile(notebookId, relPath);
+            contentCache.set(relPath, content);
             const stat = await this.statFile(notebookId, relPath);
             const title = this.searchTitleFromPath(relPath);
             const isCreate = created.includes(relPath);
@@ -38252,10 +38388,13 @@ let ReconciliationService = class ReconciliationService {
             this.linkGraphService.registerFile(notebookId, relPath);
             this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
         }
-        // Phase 3: Compute edges for each changed file (IDF is current after phase 2)
+        // Phase 3: Compute implicit + explicit edges for each changed file
         for (const relPath of changedPaths) {
-            const edges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
-            this.linkGraphService.replaceEdgesForFile(notebookId, relPath, edges);
+            const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
+            this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relPath, implicitEdges);
+            const content = contentCache.get(relPath);
+            const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relPath, content);
+            this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relPath, explicitEdges);
             processed++;
             this.sendProgress(notebookId, processed, total);
         }
@@ -38269,8 +38408,10 @@ let ReconciliationService = class ReconciliationService {
         const total = files.length;
         let processed = 0;
         // Phase 1: Extract terms for all files and register in TF-IDF corpus
+        const contentCache = new Map();
         for (const file of files) {
             const content = await this.readFile(notebookId, file.relativePath);
+            contentCache.set(file.relativePath, content);
             const title = this.searchTitleFromPath(file.relativePath);
             await this.searchIndexService.addDocument(notebookId, file.relativePath, title, content);
             const terms = this.nlpService.extractTerms(content);
@@ -38288,9 +38429,17 @@ let ReconciliationService = class ReconciliationService {
                 await this.persistenceService.persistTfidf(notebookId);
             }
         }
-        // Phase 2: Compute all edges at once (IDF needs full corpus)
-        const edges = this.tfidfService.computeAllEdges(notebookId);
-        this.linkGraphService.replaceAllEdges(notebookId, edges);
+        // Phase 2: Compute all implicit edges at once (IDF needs full corpus)
+        const implicitEdges = this.tfidfService.computeAllEdges(notebookId);
+        this.linkGraphService.replaceAllImplicitEdges(notebookId, implicitEdges);
+        // Phase 3: Extract explicit wikilink edges (metadata is fully registered now)
+        for (const file of files) {
+            const content = contentCache.get(file.relativePath);
+            const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, file.relativePath, content);
+            if (explicitEdges.length > 0) {
+                this.linkGraphService.replaceExplicitEdgesForFile(notebookId, file.relativePath, explicitEdges);
+            }
+        }
         await this.persistenceService.persistAll(notebookId);
         this.messageBus.sendNotification(isomorphic_onyvore_1.onyvoreRpcMethods.NOTEBOOK_READY, {
             notebookId,
@@ -38362,8 +38511,132 @@ exports.ReconciliationService = ReconciliationService;
 exports.ReconciliationService = ReconciliationService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
     tslib_1.__param(0, (0, common_1.Inject)(isomorphic_jsonrpc_1.MESSAGE_BUS)),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _g : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof isomorphic_jsonrpc_1.MessageBus !== "undefined" && isomorphic_jsonrpc_1.MessageBus) === "function" ? _a : Object, typeof (_b = typeof nlp_service_1.NlpService !== "undefined" && nlp_service_1.NlpService) === "function" ? _b : Object, typeof (_c = typeof search_index_service_1.SearchIndexService !== "undefined" && search_index_service_1.SearchIndexService) === "function" ? _c : Object, typeof (_d = typeof link_graph_service_1.LinkGraphService !== "undefined" && link_graph_service_1.LinkGraphService) === "function" ? _d : Object, typeof (_e = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _e : Object, typeof (_f = typeof persistence_service_1.PersistenceService !== "undefined" && persistence_service_1.PersistenceService) === "function" ? _f : Object, typeof (_g = typeof tfidf_service_1.TfidfService !== "undefined" && tfidf_service_1.TfidfService) === "function" ? _g : Object, typeof (_h = typeof wikilink_service_1.WikilinkService !== "undefined" && wikilink_service_1.WikilinkService) === "function" ? _h : Object])
 ], ReconciliationService);
+
+
+/***/ }),
+/* 715 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+var _a;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.WikilinkService = void 0;
+const tslib_1 = __webpack_require__(3);
+const common_1 = __webpack_require__(87);
+const metadata_service_1 = __webpack_require__(710);
+const path = tslib_1.__importStar(__webpack_require__(654));
+let WikilinkService = class WikilinkService {
+    metadataService;
+    constructor(metadataService) {
+        this.metadataService = metadataService;
+    }
+    /**
+     * Extract wikilinks from content and resolve them to explicit edges.
+     * Returns directional edges: source -> resolved target (outbound only).
+     */
+    extractAndResolve(notebookId, sourceFile, content) {
+        const parsed = this.parseWikilinks(content);
+        if (parsed.length === 0)
+            return [];
+        const allFiles = Object.keys(this.metadataService.getAllFiles(notebookId));
+        const edges = [];
+        const seen = new Set();
+        for (const link of parsed) {
+            const resolved = this.resolveTarget(link.target, allFiles);
+            if (!resolved)
+                continue;
+            if (resolved === sourceFile)
+                continue; // skip self-links
+            if (seen.has(resolved))
+                continue; // deduplicate
+            seen.add(resolved);
+            edges.push({
+                source: sourceFile,
+                target: resolved,
+                type: 'explicit',
+                noun: link.target,
+                displayText: link.displayText ?? undefined,
+                count: 100,
+            });
+        }
+        return edges;
+    }
+    /**
+     * Parse [[wikilink]] and [[wikilink|display text]] syntax from markdown.
+     * Skips wikilinks inside fenced code blocks and inline code.
+     */
+    parseWikilinks(content) {
+        // Strip fenced code blocks
+        const withoutFenced = content.replace(/```[\s\S]*?```/g, '');
+        // Strip inline code
+        const withoutCode = withoutFenced.replace(/`[^`]*`/g, '');
+        const results = [];
+        const regex = /\[\[([^\]]+)\]\]/g;
+        let match;
+        while ((match = regex.exec(withoutCode)) !== null) {
+            const inner = match[1].trim();
+            if (!inner)
+                continue;
+            const pipeIndex = inner.indexOf('|');
+            if (pipeIndex === -1) {
+                results.push({ target: inner, displayText: null });
+            }
+            else {
+                const target = inner.substring(0, pipeIndex).trim();
+                const displayText = inner.substring(pipeIndex + 1).trim();
+                if (target) {
+                    results.push({ target, displayText: displayText || null });
+                }
+            }
+        }
+        return results;
+    }
+    /**
+     * Resolve a wikilink target to a file path.
+     *
+     * Resolution rules (Obsidian-compatible):
+     * 1. Strip .md extension from target if present
+     * 2. If target contains '/', try exact relative path match
+     * 3. Otherwise, case-insensitive basename match
+     * 4. If multiple matches, prefer shortest path
+     */
+    resolveTarget(target, allFiles) {
+        // Normalize: strip .md if present
+        const normalized = target.endsWith('.md')
+            ? target.slice(0, -3)
+            : target;
+        if (!normalized)
+            return null;
+        // Path-based match (target contains /)
+        if (normalized.includes('/')) {
+            const withExt = normalized + '.md';
+            // Try exact match (case-insensitive)
+            const exactMatch = allFiles.find((f) => f.toLowerCase() === withExt.toLowerCase());
+            return exactMatch ?? null;
+        }
+        // Basename match (case-insensitive)
+        const lowerTarget = normalized.toLowerCase();
+        const matches = allFiles.filter((f) => {
+            const basename = path.basename(f, '.md').toLowerCase();
+            return basename === lowerTarget;
+        });
+        if (matches.length === 0)
+            return null;
+        if (matches.length === 1)
+            return matches[0];
+        // Multiple matches: prefer shortest path (most specific / closest to root)
+        matches.sort((a, b) => a.length - b.length);
+        return matches[0];
+    }
+};
+exports.WikilinkService = WikilinkService;
+exports.WikilinkService = WikilinkService = tslib_1.__decorate([
+    (0, common_1.Injectable)(),
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof metadata_service_1.MetadataService !== "undefined" && metadata_service_1.MetadataService) === "function" ? _a : Object])
+], WikilinkService);
 
 
 /***/ })
