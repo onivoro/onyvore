@@ -5,6 +5,8 @@ export const onyvoreRpcMethods = {
   NOTEBOOK_FILE_EVENT: 'notebook.fileEvent',
   NOTEBOOK_IGNORE_CHANGED: 'notebook.ignoreChanged',
   NOTEBOOK_SEARCH: 'notebook.search',
+  NOTEBOOK_SEARCH_ALL: 'notebook.searchAll',
+  NOTEBOOK_GET_GRAPH: 'notebook.getGraph',
   NOTEBOOK_GET_LINKS: 'notebook.getLinks',
   NOTEBOOK_GET_NOTEBOOKS: 'notebook.getNotebooks',
   NOTEBOOK_GET_ORPHANS: 'notebook.getOrphans',

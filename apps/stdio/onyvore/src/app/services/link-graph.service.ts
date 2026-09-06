@@ -1,5 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import type { Edge, EdgeType, LinksForNote, LinkEntry } from '@onivoro/isomorphic-onyvore';
+import type {
+  Edge,
+  EdgeType,
+  LinksForNote,
+  LinkEntry,
+  NotebookGraph,
+  GraphNode,
+  GraphEdge,
+} from '@onivoro/isomorphic-onyvore';
 import * as path from 'path';
 
 const VALID_EDGE_TYPES: ReadonlySet<string> = new Set<EdgeType>([
@@ -215,6 +223,76 @@ export class LinkGraphService {
       }
     }
     return false;
+  }
+
+  /**
+   * The whole graph, for visualization.
+   *
+   * `similar` edges are stored in both directions; only one is emitted here so
+   * the renderer draws a single undirected line. When the notebook exceeds
+   * `maxNodes`, the best-connected notes are kept and the count of dropped
+   * notes is reported rather than silently truncated.
+   */
+  getGraph(notebookId: string, maxNodes = 500): NotebookGraph {
+    const graph = this.graphs.get(notebookId);
+    if (!graph) {
+      return { notebookId, nodes: [], edges: [], truncated: 0 };
+    }
+
+    const all: GraphNode[] = Array.from(graph.files).map((filePath) => ({
+      relativePath: filePath,
+      title: this.titleFromPath(filePath),
+      degree: this.linkingDegree(graph, filePath),
+      orphan: !this.hasLinkingEdges(graph, filePath),
+    }));
+
+    const kept =
+      all.length <= maxNodes
+        ? all
+        : [...all].sort((a, b) => b.degree - a.degree).slice(0, maxNodes);
+
+    const visible = new Set(kept.map((n) => n.relativePath));
+    const edges: GraphEdge[] = [];
+    const seenSimilar = new Set<string>();
+
+    for (const edge of graph.edges.values()) {
+      if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
+
+      if (edge.type === 'similar') {
+        const key =
+          edge.source < edge.target
+            ? `${edge.source}\u0000${edge.target}`
+            : `${edge.target}\u0000${edge.source}`;
+        if (seenSimilar.has(key)) continue;
+        seenSimilar.add(key);
+      }
+
+      edges.push({
+        source: edge.source,
+        target: edge.target,
+        type: edge.type,
+        count: edge.count,
+      });
+    }
+
+    return {
+      notebookId,
+      nodes: kept,
+      edges,
+      truncated: all.length - kept.length,
+    };
+  }
+
+  /** Count of non-`similar` edges touching a note, in either direction. */
+  private linkingDegree(graph: LinkGraph, filePath: string): number {
+    let degree = 0;
+    for (const index of [graph.outboundIndex, graph.inboundIndex]) {
+      for (const key of index.get(filePath) ?? []) {
+        const edge = graph.edges.get(key);
+        if (edge && edge.type !== 'similar') degree++;
+      }
+    }
+    return degree;
   }
 
   getEdgesForPersistence(notebookId: string): Edge[] {

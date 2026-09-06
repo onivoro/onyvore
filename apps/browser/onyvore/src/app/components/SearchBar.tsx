@@ -7,7 +7,11 @@ import {
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useRpc, useRpcResponse } from '../hooks/use-rpc-request.hook';
-import { onyvoreRpcMethods } from '@onivoro/isomorphic-onyvore';
+import {
+  onyvoreRpcMethods,
+  type NotebookSearchGroup,
+  type NotebookSearchHit,
+} from '@onivoro/isomorphic-onyvore';
 import { searchResultsActions } from '../state/slices/search-results.slice';
 import type { RootState } from '../state/types/root-state.type';
 import { SearchIcon, FileIcon } from './Icons';
@@ -25,11 +29,16 @@ function highlightSnippet(snippet: string, query: string): ReactNode[] {
   );
 }
 
-interface SearchResult {
-  relativePath: string;
-  title: string;
-  score: number;
-  snippets: string[];
+/** One result plus the notebook it came from, so selection stays unambiguous. */
+interface FlatHit {
+  notebookId: string;
+  hit: NotebookSearchHit;
+}
+
+function flatten(groups: NotebookSearchGroup[]): FlatHit[] {
+  return groups.flatMap((group) =>
+    group.results.map((hit) => ({ notebookId: group.notebookId, hit })),
+  );
 }
 
 interface SearchBarProps {
@@ -43,10 +52,14 @@ export function SearchBar({ notebookId }: SearchBarProps) {
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [groups, setGroups] = useState<NotebookSearchGroup[]>([]);
   const [selected, setSelected] = useState(0);
+  const [allNotebooks, setAllNotebooks] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
   const response = useRpcResponse(requestId);
+
+  const notebooks = useSelector((state: RootState) => state.notebooks.notebooks);
+  const hits = flatten(groups);
 
   // `Onyvore: Search Notebook` sets this so the command actually focuses the box.
   const showRequested = useSelector(
@@ -62,44 +75,76 @@ export function SearchBar({ notebookId }: SearchBarProps) {
 
   useEffect(() => {
     if (!response?.result) return;
-    const data = response.result as { results: SearchResult[] };
-    setResults(data.results ?? []);
+    const data = response.result as
+      | { results: NotebookSearchHit[] }
+      | { groups: NotebookSearchGroup[] };
+
+    if ('groups' in data) {
+      setGroups(data.groups ?? []);
+    } else {
+      setGroups(
+        data.results?.length && notebookId
+          ? [{ notebookId, notebookName: '', results: data.results }]
+          : [],
+      );
+    }
     setSelected(0);
     setRequestId(null);
   }, [response]);
 
   const clear = useCallback(() => {
     setQuery('');
-    setResults([]);
+    setGroups([]);
     setSelected(0);
   }, []);
 
-  const handleSearch = useCallback(
-    (searchQuery: string) => {
-      setQuery(searchQuery);
+  const runSearch = useCallback(
+    (searchQuery: string, searchAll: boolean) => {
       setSelected(0);
-      if (!notebookId || searchQuery.trim().length === 0) {
-        setResults([]);
+      if (searchQuery.trim().length === 0 || (!searchAll && !notebookId)) {
+        setGroups([]);
         return;
       }
-      const id = sendRequest({
-        method: onyvoreRpcMethods.NOTEBOOK_SEARCH,
-        params: { notebookId, query: searchQuery },
-      });
-      setRequestId(id);
+      setRequestId(
+        sendRequest(
+          searchAll
+            ? {
+                method: onyvoreRpcMethods.NOTEBOOK_SEARCH_ALL,
+                params: { query: searchQuery },
+              }
+            : {
+                method: onyvoreRpcMethods.NOTEBOOK_SEARCH,
+                params: { notebookId, query: searchQuery },
+              },
+        ),
+      );
     },
     [notebookId, sendRequest],
   );
 
+  const handleSearch = useCallback(
+    (searchQuery: string) => {
+      setQuery(searchQuery);
+      runSearch(searchQuery, allNotebooks);
+    },
+    [runSearch, allNotebooks],
+  );
+
+  const toggleScope = useCallback(() => {
+    const next = !allNotebooks;
+    setAllNotebooks(next);
+    runSearch(query, next);
+  }, [allNotebooks, query, runSearch]);
+
   const openResult = useCallback(
-    (relativePath: string) => {
+    (targetNotebookId: string, relativePath: string) => {
       sendRequest({
         method: onyvoreRpcMethods.OPEN_FILE,
-        params: { notebookId, relativePath },
+        params: { notebookId: targetNotebookId, relativePath },
       });
       clear();
     },
-    [notebookId, sendRequest, clear],
+    [sendRequest, clear],
   );
 
   // Keep the highlighted result in view while arrowing through a long list.
@@ -116,20 +161,23 @@ export function SearchBar({ notebookId }: SearchBarProps) {
       return;
     }
 
-    if (results.length === 0) return;
+    if (hits.length === 0) return;
 
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelected((i) => (i + 1) % results.length);
+      setSelected((i) => (i + 1) % hits.length);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelected((i) => (i - 1 + results.length) % results.length);
+      setSelected((i) => (i - 1 + hits.length) % hits.length);
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      const result = results[selected];
-      if (result) openResult(result.relativePath);
+      const target = hits[selected];
+      if (target) openResult(target.notebookId, target.hit.relativePath);
     }
   };
+
+  // Index into the flattened list, so keyboard selection spans groups.
+  let flatIndex = -1;
 
   return (
     <>
@@ -145,37 +193,65 @@ export function SearchBar({ notebookId }: SearchBarProps) {
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={!notebookId}
+          disabled={!notebookId && !allNotebooks}
         />
+        {notebooks.length > 1 && (
+          <button
+            type="button"
+            className={`ony-searchbar__scope${allNotebooks ? ' ony-searchbar__scope--on' : ''}`}
+            title={
+              allNotebooks
+                ? 'Searching all notebooks — click to search only this one'
+                : 'Searching this notebook — click to search all'
+            }
+            aria-pressed={allNotebooks}
+            onClick={toggleScope}
+          >
+            All
+          </button>
+        )}
       </div>
-      {results.length > 0 && (
+      {groups.length > 0 && (
         <div className="ony-searchbar__results" ref={resultsRef}>
-          {results.map((result, index) => (
-            <div key={result.relativePath} className="ony-searchbar__result-group">
-              <ul className="ony-tree">
-                <TreeItem
-                  label={result.title}
-                  sublabel={result.relativePath}
-                  icon={<FileIcon />}
-                  badge={result.snippets.length}
-                  selected={index === selected}
-                  onClick={() => openResult(result.relativePath)}
-                />
-              </ul>
-              {result.snippets.map((snippet, i) => (
-                <div
-                  key={i}
-                  className="ony-searchbar__snippet"
-                  onClick={() => openResult(result.relativePath)}
-                >
-                  {highlightSnippet(snippet, query)}
+          {groups.map((group) => (
+            <div key={group.notebookId}>
+              {allNotebooks && (
+                <div className="ony-searchbar__group-header">
+                  {group.notebookName}
                 </div>
-              ))}
+              )}
+              {group.results.map((result) => {
+                flatIndex++;
+                const index = flatIndex;
+                const open = () => openResult(group.notebookId, result.relativePath);
+                return (
+                  <div
+                    key={`${group.notebookId}:${result.relativePath}`}
+                    className="ony-searchbar__result-group"
+                  >
+                    <ul className="ony-tree">
+                      <TreeItem
+                        label={result.title}
+                        sublabel={result.relativePath}
+                        icon={<FileIcon />}
+                        badge={result.snippets.length}
+                        selected={index === selected}
+                        onClick={open}
+                      />
+                    </ul>
+                    {result.snippets.map((snippet, i) => (
+                      <div key={i} className="ony-searchbar__snippet" onClick={open}>
+                        {highlightSnippet(snippet, query)}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
       )}
-      {query.length > 0 && results.length === 0 && (
+      {query.length > 0 && hits.length === 0 && (
         <div className="ony-searchbar__empty">No results found</div>
       )}
     </>

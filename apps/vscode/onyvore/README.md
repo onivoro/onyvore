@@ -114,9 +114,11 @@ Reports wikilinks that resolve to nothing as warnings, and provides quick fixes:
 
 This is how renames are handled. Onyvore never rewrites user files, so a link broken by a rename is surfaced rather than silently repaired, and the quick fix applies the edit as the user's action.
 
-### LinksViewService
+### SecondaryViewsService
 
-Registers the Links panel as a second webview view (`onyvore.links`). The extension framework wires exactly one webview provider, so this one is registered directly: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications the panel needs are forwarded explicitly, since the framework's broadcast reaches only the primary provider.
+Registers the Links (`onyvore.links`) and Graph (`onyvore.graph`) webview views. The extension framework wires exactly one webview provider, so these are registered directly: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications these panels need are forwarded explicitly, since the framework's broadcast reaches only the primary provider.
+
+All views render the same bundle; `OnyvoreSecondaryWebviewProvider` injects `window.__ONYVORE_VIEW__` to say which one it is.
 
 ### FileWatcherService
 

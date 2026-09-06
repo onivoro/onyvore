@@ -3,7 +3,7 @@ import * as path from 'path';
 import { Module } from '@nestjs/common';
 import { VscodeExtensionModule } from '@onivoro/server-vscode';
 import { OnyvoreWebviewProvider } from './classes/onyvore-webview-provider.class';
-import { LinksViewService } from './services/links-view.service';
+import { SecondaryViewsService } from './services/secondary-views.service';
 import { OnyvoreCommandHandlerService } from './services/onyvore-command-handler.service';
 import { OnyvoreWebviewHandlerService } from './services/onyvore-webview-handler.service';
 import { OnyvoreServerNotificationHandlerService } from './services/onyvore-server-notification-handler.service';
@@ -41,7 +41,7 @@ function bundlePath(...segments: string[]): string {
     FileWatcherService,
     NotebookFilesService,
     OnyvoreSettingsService,
-    LinksViewService,
+    SecondaryViewsService,
     WikilinkFeaturesService,
     WikilinkDiagnosticsService,
   ],

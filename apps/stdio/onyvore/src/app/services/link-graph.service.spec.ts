@@ -409,3 +409,99 @@ describe('LinkGraphService', () => {
     });
   });
 });
+
+describe('LinkGraphService — getGraph', () => {
+  let svc: LinkGraphService;
+
+  beforeEach(() => {
+    svc = new LinkGraphService();
+  });
+
+  it('should report every registered note as a node', () => {
+    svc.registerFile(NB, 'a.md');
+    svc.registerFile(NB, 'work/b.md');
+
+    const graph = svc.getGraph(NB);
+
+    expect(graph.nodes.map((n) => n.relativePath).sort()).toEqual([
+      'a.md',
+      'work/b.md',
+    ]);
+    expect(graph.nodes.find((n) => n.relativePath === 'work/b.md')?.title).toBe('b');
+    expect(graph.truncated).toBe(0);
+  });
+
+  it('should emit one line per similar pair, not two', () => {
+    svc.registerFile(NB, 'a.md');
+    svc.registerFile(NB, 'b.md');
+    svc.replaceAllEdgesOfType(NB, 'similar', similarPair('a.md', 'b.md'));
+
+    expect(svc.getGraph(NB).edges).toHaveLength(1);
+  });
+
+  it('should keep both directions for directional edge types', () => {
+    svc.registerFile(NB, 'a.md');
+    svc.registerFile(NB, 'b.md');
+    svc.replaceOutboundEdgesForFile(NB, 'a.md', 'mention', [mention('a.md', 'b.md')]);
+    svc.replaceOutboundEdgesForFile(NB, 'b.md', 'mention', [mention('b.md', 'a.md')]);
+
+    expect(svc.getGraph(NB).edges).toHaveLength(2);
+  });
+
+  it('should count degree from linking edges only', () => {
+    svc.registerFile(NB, 'a.md');
+    svc.registerFile(NB, 'b.md');
+    svc.replaceOutboundEdgesForFile(NB, 'a.md', 'mention', [mention('a.md', 'b.md')]);
+    svc.replaceSymmetricEdgesForFile(NB, 'a.md', 'similar', similarPair('a.md', 'b.md'));
+
+    const node = svc.getGraph(NB).nodes.find((n) => n.relativePath === 'a.md');
+    expect(node?.degree).toBe(1);
+    expect(node?.orphan).toBe(false);
+  });
+
+  it('should mark a note with only similar edges as an orphan', () => {
+    svc.registerFile(NB, 'a.md');
+    svc.replaceSymmetricEdgesForFile(NB, 'a.md', 'similar', similarPair('a.md', 'b.md'));
+
+    expect(svc.getGraph(NB).nodes[0].orphan).toBe(true);
+  });
+
+  it('should keep the best-connected notes when over the cap', () => {
+    for (const name of ['hub', 'a', 'b', 'c']) svc.registerFile(NB, `${name}.md`);
+    svc.replaceOutboundEdgesForFile(NB, 'hub.md', 'mention', [
+      mention('hub.md', 'a.md'),
+      mention('hub.md', 'b.md'),
+    ]);
+
+    const graph = svc.getGraph(NB, 2);
+
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.nodes.map((n) => n.relativePath)).toContain('hub.md');
+    expect(graph.truncated).toBe(2);
+  });
+
+  it('should drop edges whose endpoints were cut', () => {
+    for (const name of ['hub', 'a', 'b', 'c']) svc.registerFile(NB, `${name}.md`);
+    svc.replaceOutboundEdgesForFile(NB, 'hub.md', 'mention', [
+      mention('hub.md', 'a.md'),
+      mention('hub.md', 'b.md'),
+    ]);
+
+    const graph = svc.getGraph(NB, 2);
+    const visible = new Set(graph.nodes.map((n) => n.relativePath));
+
+    for (const edge of graph.edges) {
+      expect(visible.has(edge.source)).toBe(true);
+      expect(visible.has(edge.target)).toBe(true);
+    }
+  });
+
+  it('should return an empty graph for an unknown notebook', () => {
+    expect(svc.getGraph('/nope')).toEqual({
+      notebookId: '/nope',
+      nodes: [],
+      edges: [],
+      truncated: 0,
+    });
+  });
+});

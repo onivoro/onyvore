@@ -94,7 +94,8 @@ The parent notebook's file watcher, search index, and link graph skip any subdir
 
 ### 4.3 High-Performance Search
 * **Search Engine:** Powered by **Orama**, a pure-TypeScript, in-memory search engine. Orama indexes the title (path-qualified for files in subdirectories, e.g., "work overview" for `work/overview.md`), the file path, and the full text of each note, providing broad keyword and partial-match recall. Each notebook has its own independent search index.
-* **Fuzzy Matching:** Instant results for keyword and partial matches across the active notebook. Search queries match against the note title, file path, and content — so searching "work overview" preferentially surfaces `work/overview.md` over `personal/overview.md`.
+* **Search Scope:** Search covers the viewed notebook by default. When a workspace has more than one notebook, a toggle widens it to all of them, with results grouped by notebook and the notebook holding the strongest match listed first.
+* **Fuzzy Matching:** Instant results for keyword and partial matches across the searched notebook(s). Search queries match against the note title, file path, and content — so searching "work overview" preferentially surfaces `work/overview.md` over `personal/overview.md`.
 * **Graph-Boosted Ranking:** Search results are boosted by link graph centrality. Notes with more inbound links rank higher, surfacing well-connected notes above isolated ones with the same keyword relevance. The formula is: `finalScore = oramaScore * (1 + log2(1 + inboundLinkCount))`. Results with zero content matches (matched only by title fuzzy matching) are filtered out.
 * **Snippet Previews:** Each search result includes **all matching text snippets** — ~120-character windows around every occurrence of the search terms in the document. Nearby matches are merged into single longer snippets. Search terms are highlighted within snippets. The match count is displayed as a badge on each result.
 * **Persistence:** All derived artifacts (`index.bin`, `links.json`, `metadata.json`) are written to disk on two triggers: after each debounced batch of incremental updates completes, and on extension deactivation (exit). This ensures a VS Code crash loses at most one debounce window (~300ms) of work. The persisted `index.bin` allows sub-100ms startup for large notebooks (10,000+ notes).
@@ -207,7 +208,17 @@ When the extension activates and a notebook's artifacts already exist, they may 
 
 Reconciliation is also the mechanism behind `.onyvoreignore` changes (Section 5.2): reloading the rules turns newly-ignored files into deletions and newly-admitted files into creations, which is exactly the diff this already computes.
 
-### 4.5 Editor Integration
+### 4.5 Graph View
+
+A read-only force-directed view of the notebook's link graph, in its own panel. It follows the **active notebook**, so it reflects whatever note is being edited.
+
+* Node size reflects how many `explicit` and `mention` edges touch a note; `similar` edges are excluded so size tracks deliberate connection rather than vocabulary overlap.
+* Edges are colored and weighted by type, and authored links pull harder in the layout than computed ones — so the shape reflects how much each kind of edge is worth trusting.
+* Orphans and the active note are distinguished, making both easy to spot.
+* Clicking a node opens that note; the wheel zooms.
+* Large notebooks are capped at the best-connected 500 notes, and the number omitted is stated rather than silently truncated.
+
+### 4.6 Editor Integration
 
 Wikilinks are authored in the editor, so Onyvore provides the language features that make them usable. All of them resolve links through the same shared implementation the link graph uses, so the editor and the graph cannot disagree about where `[[foo]]` points.
 
@@ -219,7 +230,7 @@ Wikilinks are authored in the editor, so Onyvore provides the language features 
 
 The diagnostics are how renames are handled. Onyvore never rewrites user files, so a link broken by a rename cannot be silently repaired the way Obsidian repairs one; reporting it makes the zero-mutation guarantee safe rather than lossy, and the quick fix applies the edit as the user's own action.
 
-### 4.6 Metadata
+### 4.7 Metadata
 Onyvore derives metadata for each note and stores it in `metadata.json`. Metadata is computed from filesystem state:
 * **Last-seen modification time:** Used by startup reconciliation (Section 4.4) to detect files changed while the extension was not running.
 
@@ -315,7 +326,7 @@ The sidebar is organized top-to-bottom:
 
 1. **Toolbar:** "ONYVORE" title + plus (+) button (initialize new notebook) + rebuild button (rebuild viewed notebook's index).
 2. **Notebook Selector:** Dropdown with typeahead filtering. Shown when more than one notebook exists. The selected notebook becomes the "viewed notebook."
-3. **Search Bar:** Always visible (omnipresent). Searches the viewed notebook's full-text index. Results appear inline below the search field, each showing the note title, file path (using the shared `TreeItem` component), a match count badge, and **all matching text snippets** with highlighted search terms. Files with zero content matches are filtered out. Pressing Escape clears the search.
+3. **Search Bar:** Always visible (omnipresent). Searches the viewed notebook's full-text index, or all notebooks when the scope toggle is on. Arrow keys move through results, Enter opens the highlighted one, Escape clears. Results appear inline below the search field, each showing the note title, file path (using the shared `TreeItem` component), a match count badge, and **all matching text snippets** with highlighted search terms. Files with zero content matches are filtered out. Pressing Escape clears the search.
 4. **File Tree:** Collapsible section showing the viewed notebook's files with progress bar during initialization/reconciliation.
 5. **Unlinked Notes:** Collapsible section (collapsed by default) showing orphan notes in the viewed notebook.
 The **Links Panel** is a separate view rather than another section of this list, so it can be collapsed, reordered, or dragged to the secondary sidebar — which is where a backlinks panel belongs while writing. It follows the **active note** (the editor), not the viewed notebook, and renders up to five sections: Links, Backlinks, Mentions, Mentioned By, and Related Notes, omitting any that are empty.
@@ -375,6 +386,5 @@ Obsidian's linking model assumes a human author creating `[[wikilinks]]` manuall
 ---
 
 ## 9. Future Considerations
-* **Link Graph Visualization:** With the computed link graph already in place, a read-only force-directed graph view (via a VS Code Webview) is a natural addition. The data layer exists; only the rendering is needed.
+* **Rename Detection:** `FileSystemWatcher` emits delete + create for a rename, so the content is fully reprocessed even though it did not change. Matching content hashes within a short window would coalesce the pair into a single rename and skip the redundant work.
 * **Multilingual NLP:** compromise is English-only. Multilingual noun-phrase extraction would require evaluating alternative pure-JS NLP libraries or a pluggable extraction backend.
-* **Cross-Notebook Search:** A workspace-level search that spans all notebooks, with results grouped by notebook. Requires aggregating across independent indexes.

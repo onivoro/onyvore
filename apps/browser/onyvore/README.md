@@ -88,6 +88,14 @@ Renders one bucket. `notePath` is already the *other* note — the target for ou
 
 Always visible above the tree. Results support arrow-key navigation with Enter to open and Escape to clear, and the highlighted result scrolls into view. `Onyvore: Search Notebook` dispatches `searchResults.show`, which focuses and selects the input.
 
+With more than one notebook in the workspace, an **All** toggle switches from `notebook.search` to `notebook.searchAll`; results are grouped under notebook headers, and keyboard selection indexes into the flattened list so it moves across groups.
+
+### GraphPanel
+
+Renders the notebook's link graph on a canvas, in its own view. The force simulation runs in a `requestAnimationFrame` loop with an annealing alpha: repulsion between all nodes (O(n²), safe because the server caps node count), springs per edge weighted by edge type, and mild gravity toward the center. Node positions are seeded on a golden-angle spiral so a reload does not reshuffle the layout.
+
+Colors come from VS Code chart theme variables read at startup. Labels are drawn only for the active note, the hovered node, and the best-connected few — labelling every node is unreadable at any real notebook size.
+
 ### SearchOverlay
 
 Absolute-positioned overlay triggered by the `Onyvore: Search Notebook` command. Features:

@@ -7,6 +7,8 @@ import {
   type FileEventBatch,
   type NotebookInfo,
   type LinksForNote,
+  type NotebookSearchGroup,
+  type NotebookGraph,
 } from '@onivoro/isomorphic-onyvore';
 import { SearchIndexService } from './search-index.service';
 import { LinkGraphService } from './link-graph.service';
@@ -266,6 +268,42 @@ export class OnyvoreMessageHandlerService {
       limit,
     );
     return { results };
+  }
+
+  /** Search every registered notebook, grouped so results stay attributable. */
+  @StdioHandler(onyvoreRpcMethods.NOTEBOOK_SEARCH_ALL)
+  async searchAllNotebooks(params: {
+    query: string;
+    limit?: number;
+  }): Promise<{ groups: NotebookSearchGroup[] }> {
+    const { query, limit } = params;
+    const groups: NotebookSearchGroup[] = [];
+
+    for (const notebook of this.notebooks.values()) {
+      const results = await this.searchIndexService.searchNotebook(
+        notebook.id,
+        query,
+        limit,
+      );
+      if (results.length === 0) continue;
+      groups.push({
+        notebookId: notebook.id,
+        notebookName: notebook.name,
+        results,
+      });
+    }
+
+    // Notebooks with the strongest single hit first.
+    groups.sort((a, b) => (b.results[0]?.score ?? 0) - (a.results[0]?.score ?? 0));
+    return { groups };
+  }
+
+  @StdioHandler(onyvoreRpcMethods.NOTEBOOK_GET_GRAPH)
+  async getGraph(params: {
+    notebookId: string;
+    maxNodes?: number;
+  }): Promise<NotebookGraph> {
+    return this.linkGraphService.getGraph(params.notebookId, params.maxNodes);
   }
 
   @StdioHandler(onyvoreRpcMethods.NOTEBOOK_GET_LINKS)

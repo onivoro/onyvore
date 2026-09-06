@@ -269,7 +269,9 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `notebook.unregister` | ext → server | Remove a notebook (e.g., `.onyvore/` deleted) |
 | `notebook.fileEvent` | ext → server | Batched file watcher events (create/change/delete array) |
 | `notebook.ignoreChanged` | ext → server | `.onyvoreignore` was modified — reload rules and reconcile |
-| `notebook.search` | webview → server | Full-text search query for active notebook |
+| `notebook.search` | webview → server | Full-text search within one notebook |
+| `notebook.searchAll` | webview → server | Search every notebook, grouped by notebook |
+| `notebook.getGraph` | webview → server | Nodes and edges for the graph view |
 | `notebook.getLinks` | webview → server | Get all five link buckets for a specific note |
 | `notebook.getNotebooks` | webview → server | List all registered notebooks with their file trees |
 | `notebook.getOrphans` | webview → server | Get unlinked notes for a notebook |
@@ -789,7 +791,7 @@ Key sections of `apps/vscode/onyvore/package.json`:
 }
 ```
 
-**Two webview views, one bundle.** The extension framework wires a single webview provider, so `LinksViewService` registers the second view itself: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications the panel needs are forwarded explicitly because the framework's broadcast only reaches the primary provider. The provider injects `window.__ONYVORE_VIEW__ = 'links'`, which is how one React build serves both views.
+**Three webview views, one bundle.** The extension framework wires a single webview provider, so `SecondaryViewsService` registers the Links and Graph views itself: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications the panel needs are forwarded explicitly because the framework's broadcast only reaches the primary provider. Each provider injects `window.__ONYVORE_VIEW__`, which is how one React build serves all three views.
 
 **Alignment checklist:**
 - `contributes.commands[*].command` ↔ `onyvoreCommands` constants ↔ `@CommandHandler()` decorators

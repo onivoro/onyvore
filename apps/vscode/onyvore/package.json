@@ -61,6 +61,12 @@
           "id": "onyvore.links",
           "name": "Links",
           "icon": "resources/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "onyvore.graph",
+          "name": "Graph",
+          "icon": "resources/icon.svg"
         }
       ]
     },

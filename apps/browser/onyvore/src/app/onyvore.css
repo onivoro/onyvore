@@ -788,3 +788,88 @@ body {
   overflow-y: auto;
   border-top: none;
 }
+
+/* ---- graph view ---- */
+.ony-graph {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.ony-graph__canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ony-graph__legend {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  pointer-events: none;
+}
+
+.ony-graph__key::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  background: currentColor;
+}
+
+.ony-graph__key--explicit { color: var(--vscode-charts-blue, #4589d6); }
+.ony-graph__key--mention  { color: var(--vscode-charts-green, #57a64a); }
+.ony-graph__key--similar  { color: var(--vscode-panel-border, #808080); }
+
+.ony-graph__truncated { font-style: italic; }
+
+/* ---- search scope toggle and cross-notebook grouping ---- */
+.ony-searchbar__scope {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  line-height: 1.6;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 2px;
+}
+
+.ony-searchbar__scope:hover {
+  color: var(--vscode-foreground);
+}
+
+.ony-searchbar__scope--on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+
+.ony-searchbar__scope:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.ony-searchbar__group-header {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+  position: sticky;
+  top: 0;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
