@@ -15,6 +15,11 @@ import { PersistenceService } from './persistence.service';
 import { ReconciliationService } from './reconciliation.service';
 import { IndexingService } from './indexing.service';
 import { IgnoreService } from './ignore.service';
+import { TfidfService } from './tfidf.service';
+import {
+  AppStdioOnyvoreConfig,
+  type OnyvoreServerSettings,
+} from '../app-stdio-onyvore-config.class';
 
 interface RegisteredNotebook {
   id: string;
@@ -37,7 +42,35 @@ export class OnyvoreMessageHandlerService {
     private readonly reconciliationService: ReconciliationService,
     private readonly indexingService: IndexingService,
     private readonly ignoreService: IgnoreService,
+    private readonly tfidfService: TfidfService,
+    private readonly config: AppStdioOnyvoreConfig,
   ) {}
+
+  /**
+   * Apply user settings. Changing anything that shapes the similarity graph
+   * makes the stored `similar` edges stale, so they are recomputed immediately
+   * rather than drifting until the next rebuild.
+   */
+  @StdioHandler(onyvoreRpcMethods.SERVER_CONFIGURE)
+  async configure(
+    params: Partial<OnyvoreServerSettings>,
+  ): Promise<{ success: boolean }> {
+    if (!this.config.update(params)) return { success: true };
+
+    for (const notebookId of this.notebooks.keys()) {
+      this.linkGraphService.replaceAllEdgesOfType(
+        notebookId,
+        'similar',
+        this.tfidfService.computeAllEdges(notebookId),
+      );
+      await this.persistenceService.persistLinks(notebookId);
+      this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_INDEX_UPDATED, {
+        notebookId,
+      });
+    }
+
+    return { success: true };
+  }
 
   @StdioHandler('health')
   async health(): Promise<{ status: string; timestamp: string }> {

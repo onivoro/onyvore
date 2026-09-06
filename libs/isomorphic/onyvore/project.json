@@ -7,9 +7,20 @@
     "build": {
       "executor": "@nx/vite:build",
       "generatePackageJson": true,
-      "outputs": ["{options.outputPath}"],
+      "outputs": [
+        "{options.outputPath}"
+      ],
       "options": {
         "outputPath": "dist/libs/isomorphic/onyvore"
+      }
+    },
+    "test": {
+      "executor": "@nx/jest:jest",
+      "outputs": [
+        "{workspaceRoot}/coverage/libs/isomorphic/onyvore"
+      ],
+      "options": {
+        "jestConfig": "libs/isomorphic/onyvore/jest.config.ts"
       }
     }
   },

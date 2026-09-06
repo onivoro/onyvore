@@ -11,6 +11,7 @@ export const onyvoreRpcMethods = {
   NOTEBOOK_REBUILD: 'notebook.rebuild',
   NOTEBOOK_RECONCILE: 'notebook.reconcile',
   NOTEBOOK_INITIALIZE: 'notebook.initialize',
+  SERVER_CONFIGURE: 'server.configure',
   // Notifications
   NOTEBOOK_INIT_PROGRESS: 'notebook.initProgress',
   NOTEBOOK_RECONCILE_PROGRESS: 'notebook.reconcileProgress',

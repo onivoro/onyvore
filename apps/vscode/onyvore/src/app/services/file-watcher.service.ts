@@ -6,8 +6,7 @@ import { NotebookDiscoveryService } from './notebook-discovery.service';
 import * as path from 'path';
 import * as fs from 'fs';
 import ignore from 'ignore';
-
-const DEBOUNCE_MS = 300;
+import { OnyvoreSettingsService } from './onyvore-settings.service';
 
 interface WatcherState {
   watcher: any; // vscode.FileSystemWatcher
@@ -26,6 +25,7 @@ export class FileWatcherService implements OnModuleDestroy {
     @Inject(MESSAGE_BUS) private readonly messageBus: MessageBus,
     @Inject(forwardRef(() => NotebookDiscoveryService))
     private readonly notebookDiscovery: NotebookDiscoveryService,
+    private readonly settings: OnyvoreSettingsService,
   ) {}
 
   onModuleDestroy(): void {
@@ -116,7 +116,7 @@ export class FileWatcherService implements OnModuleDestroy {
         notebookId,
         events: batch,
       });
-    }, DEBOUNCE_MS);
+    }, this.settings.debounceMs);
   }
 
   private isInsideNestedNotebook(

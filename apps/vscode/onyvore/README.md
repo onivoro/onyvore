@@ -26,7 +26,7 @@ The `@VscodeExtensionModule` decorator configures:
 | `commandHandlerTokens` | `[OnyvoreCommandHandlerService]` | Services with `@CommandHandler` methods |
 | `serverOutputChannel` | `{ name: 'Onyvore Server', showOnError: true }` | VS Code OutputChannel for server logs |
 
-The `@Module` decorator registers all six services as providers.
+The `@Module` decorator registers every service as a provider. NestJS instantiates them eagerly, so services that only register VS Code providers still run their `onModuleInit`.
 
 ## Webview Provider (`src/app/classes/onyvore-webview-provider.class.ts`)
 
@@ -95,6 +95,28 @@ Implements `OnModuleInit` and `OnModuleDestroy`.
 - Also records which notebook the sidebar is showing (`setViewedNotebook`), so the Search and Rebuild commands target the same notebook as the sidebar's own buttons
 - Updates a status bar item showing the active notebook name (or "No Notebook")
 - Sends `activeNotebook.changed` notification to the webview via the message bus
+
+### NotebookFilesService
+
+Caches each notebook's file list, refreshed on `notebook.ready` and `notebook.indexUpdated`. The editor features need the list synchronously and on every keystroke, so round-tripping to the stdio server per request is not viable.
+
+### OnyvoreSettingsService
+
+Reads `onyvore.*` settings. Graph-shaping ones (`relatedNotes.*`) are pushed to the server via `server.configure` on activation and on change; host-only ones (`fileWatcher.debounceMs`, `wikilinks.showUnresolved`) are exposed as getters.
+
+### WikilinkFeaturesService
+
+Registers completion, document-link, and hover providers for markdown files. Resolution comes from the shared isomorphic helpers — the same ones the stdio server uses to build the link graph — so where the editor navigates and where the graph drew an edge cannot disagree.
+
+### WikilinkDiagnosticsService
+
+Reports wikilinks that resolve to nothing as warnings, and provides quick fixes: create the missing note, or repoint the link at an existing note with a similar name. Refreshes on document change, configuration change, and `notebook.indexUpdated`.
+
+This is how renames are handled. Onyvore never rewrites user files, so a link broken by a rename is surfaced rather than silently repaired, and the quick fix applies the edit as the user's action.
+
+### LinksViewService
+
+Registers the Links panel as a second webview view (`onyvore.links`). The extension framework wires exactly one webview provider, so this one is registered directly: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications the panel needs are forwarded explicitly, since the framework's broadcast reaches only the primary provider.
 
 ### FileWatcherService
 

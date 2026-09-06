@@ -231,6 +231,11 @@ The extension host is the orchestrator. It owns VS Code API access and delegates
 | `NotebookDiscoveryService` | Scans workspace for `.onyvore/` directories. Runs on activation and on `Onyvore: Discover Notebooks`. Registers discovered notebooks with the stdio server |
 | `ActiveNotebookService` | Listens to `vscode.window.onDidChangeActiveTextEditor`. Resolves which notebook owns the focused file. Updates the status bar indicator. Notifies the webview of active notebook changes |
 | `FileWatcherService` | Creates one `vscode.FileSystemWatcher` per registered notebook. Applies `.onyvoreignore` exclusions. Watches `.onyvoreignore` for changes. Debounces events (300ms). Forwards batched events to the stdio server via JSON-RPC |
+| `NotebookFilesService` | Caches each notebook's file list in the host, refreshed on `notebook.ready` / `notebook.indexUpdated`. The editor features need it synchronously and often, so round-tripping to the server per keystroke is not viable |
+| `OnyvoreSettingsService` | Reads `onyvore.*` settings, pushes the graph-shaping ones to the server on activation and on change, and exposes the host-only ones |
+| `WikilinkFeaturesService` | Registers completion, document-link, and hover providers for `[[wikilinks]]` |
+| `WikilinkDiagnosticsService` | Reports unresolved wikilinks and provides the create-note / repoint quick fixes |
+| `LinksViewService` | Registers the Links panel as a second webview view and forwards the notifications it needs |
 
 **Key design decision:** The extension host does NOT run compromise, Orama, or any link graph computation. It is a thin layer over VS Code APIs that routes events to the stdio server. This keeps the extension host responsive — NLP and indexing run in the child process without blocking the UI.
 
@@ -271,6 +276,7 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `notebook.rebuild` | ext → server | Delete derived artifacts and re-index from scratch |
 | `notebook.reconcile` | ext → server | Trigger startup reconciliation for a notebook |
 | `notebook.initialize` | ext → server | First-time initialization (full scan) for a new notebook |
+| `server.configure` | ext → server | Push user settings; recomputes similarity edges when they change |
 | `openFile` | webview → ext | Open a note in the editor (`@WebviewHandler`) |
 | `pickDirectory` | webview → ext | Show native directory picker dialog (`@WebviewHandler`) |
 | `getActiveNotebook` | webview → ext | Get current active notebook context (`@WebviewHandler`) |
@@ -550,6 +556,16 @@ Both entry points apply `maxSimilarPerNote`. In `computeAllEdges`, candidates ar
 
 **Persistence.** `loadEdges` skips any edge whose `type` is not one of the three known values, rather than coercing unknown edges to a default — combined with the format version on `links.json`, a stale artifact rebuilds instead of silently loading as the wrong type.
 
+### 4.2b Editor Features (`WikilinkFeaturesService`, `WikilinkDiagnosticsService`)
+
+Both resolve links through `parseWikilinks` / `resolveWikilinkTarget` in the isomorphic library — the same functions `WikilinkService` uses to build the graph. That sharing is the point: if the two processes resolved separately, ctrl-clicking `[[foo]]` could open a different note than the one the graph drew an edge to.
+
+`parseWikilinks` reports byte offsets alongside each target, which is what makes editor ranges possible. Fenced and inline code are blanked with equal-length whitespace rather than removed, so every subsequent offset stays valid.
+
+Completion detects an open `[[` by scanning back along the cursor's line for an unclosed pair, and inserts `wikilinkCompletionFor(file, allFiles)` — the bare basename, or the path-qualified form when the basename is ambiguous. That helper and the resolver are tested together for round-tripping, so a suggestion always resolves back to the note that produced it.
+
+Diagnostics refresh on document open, change, and configuration change, and also on `notebook.indexUpdated` — a note created elsewhere can resolve links that were broken a moment ago.
+
 ### 4.3 Search Index (`SearchIndexService`)
 
 ```typescript
@@ -763,12 +779,17 @@ Key sections of `apps/vscode/onyvore/package.json`:
     },
     "views": {
       "onyvore": [
-        { "type": "webview", "id": "onyvore.webview", "name": "Onyvore", "icon": "resources/icon.svg" }
+        { "type": "webview", "id": "onyvore.webview", "name": "Onyvore", "icon": "resources/icon.svg" },
+        { "type": "webview", "id": "onyvore.links", "name": "Links", "icon": "resources/icon.svg" }
       ]
-    }
+    },
+    "viewsWelcome": [ /* empty-state CTA for onyvore.webview */ ],
+    "configuration": { /* onyvore.* settings — see PRD 5.3 */ }
   }
 }
 ```
+
+**Two webview views, one bundle.** The extension framework wires a single webview provider, so `LinksViewService` registers the second view itself: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications the panel needs are forwarded explicitly because the framework's broadcast only reaches the primary provider. The provider injects `window.__ONYVORE_VIEW__ = 'links'`, which is how one React build serves both views.
 
 **Alignment checklist:**
 - `contributes.commands[*].command` ↔ `onyvoreCommands` constants ↔ `@CommandHandler()` decorators

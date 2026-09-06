@@ -269,6 +269,12 @@ body {
   overflow: hidden;
 }
 
+.ony-tree__item--selected,
+.ony-tree__item--selected:hover {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
 .ony-tree__item:hover {
   background: color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent);
 }
@@ -772,4 +778,13 @@ body {
   color: var(--vscode-editor-foreground);
   opacity: 0.5;
   text-align: center;
+}
+
+/* The Links view has the whole panel to itself, so it scrolls rather than
+   sharing a fixed slice of the sidebar with the tree. */
+.ony-app__links--standalone {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: none;
 }

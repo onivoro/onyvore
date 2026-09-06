@@ -132,6 +132,7 @@ export class TfidfService {
    * Returns edges in BOTH directions (A->B and B->A) for each surviving pair.
    */
   computeEdgesForDocument(notebookId: string, filePath: string): Edge[] {
+    if (!this.config.similarityEnabled) return [];
     const corpus = this.corpora.get(notebookId);
     if (!corpus || corpus.docCount < 2) return [];
 
@@ -170,6 +171,7 @@ export class TfidfService {
    * Uses upper-triangle iteration since cosine similarity is symmetric.
    */
   computeAllEdges(notebookId: string): Edge[] {
+    if (!this.config.similarityEnabled) return [];
     const corpus = this.corpora.get(notebookId);
     if (!corpus || corpus.docCount < 2) return [];
 

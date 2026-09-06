@@ -207,7 +207,19 @@ When the extension activates and a notebook's artifacts already exist, they may 
 
 Reconciliation is also the mechanism behind `.onyvoreignore` changes (Section 5.2): reloading the rules turns newly-ignored files into deletions and newly-admitted files into creations, which is exactly the diff this already computes.
 
-### 4.5 Metadata
+### 4.5 Editor Integration
+
+Wikilinks are authored in the editor, so Onyvore provides the language features that make them usable. All of them resolve links through the same shared implementation the link graph uses, so the editor and the graph cannot disagree about where `[[foo]]` points.
+
+* **Completion:** Typing `[[` suggests notes from the current notebook. The inserted text is the bare basename, or the path-qualified form when the basename is ambiguous, so a suggestion always resolves back to the note it named. The current note is excluded — a note cannot link to itself.
+* **Navigation:** Resolved wikilinks are document links, so ctrl-click opens the target.
+* **Hover:** Hovering a wikilink previews the target's opening lines, or reports that it resolves to nothing.
+* **Diagnostics:** Wikilinks that resolve to no note are reported as warnings in the Problems panel, controlled by `onyvore.wikilinks.showUnresolved`.
+* **Quick fixes:** An unresolved link offers to create the missing note, seeded with its title, or to repoint the link at an existing note with a similar name.
+
+The diagnostics are how renames are handled. Onyvore never rewrites user files, so a link broken by a rename cannot be silently repaired the way Obsidian repairs one; reporting it makes the zero-mutation guarantee safe rather than lossy, and the quick fix applies the edit as the user's own action.
+
+### 4.6 Metadata
 Onyvore derives metadata for each note and stores it in `metadata.json`. Metadata is computed from filesystem state:
 * **Last-seen modification time:** Used by startup reconciliation (Section 4.4) to detect files changed while the extension was not running.
 
@@ -257,7 +269,19 @@ Ignored paths are excluded from:
 * Link graph (ignored files are not scanned for noun phrases and cannot be link targets)
 * Initial notebook computation (ignored files are skipped during the background scan)
 
-### 5.3 Technology Stack
+### 5.3 Settings
+
+All settings live under `onyvore.*` in VS Code settings. Those that shape the link graph are pushed to the stdio server on activation and whenever they change; changing one recomputes the affected edges immediately rather than leaving them stale until the next rebuild.
+
+| Setting | Default | Effect |
+| :--- | :--- | :--- |
+| `relatedNotes.enabled` | `true` | Compute `similar` edges at all. Turn off to rely on wikilinks and mentions alone. |
+| `relatedNotes.threshold` | `0.15` | Minimum cosine similarity (0–1). Higher means fewer, closer matches. |
+| `relatedNotes.maxPerNote` | `10` | Related notes kept per note. Bounds both the panel and `links.json`. |
+| `fileWatcher.debounceMs` | `300` | How long changes must settle before reindexing. |
+| `wikilinks.showUnresolved` | `true` | Report unresolved `[[wikilinks]]` in the Problems panel. |
+
+### 5.4 Technology Stack
 * **Runtime:** Node.js (VS Code Extension Host).
 * **Framework:** NestJS via `@onivoro/server-vscode` (three-tier architecture: extension host + stdio server + React webview).
 * **Search Engine:** Orama (Pure JS).
@@ -294,7 +318,7 @@ The sidebar is organized top-to-bottom:
 3. **Search Bar:** Always visible (omnipresent). Searches the viewed notebook's full-text index. Results appear inline below the search field, each showing the note title, file path (using the shared `TreeItem` component), a match count badge, and **all matching text snippets** with highlighted search terms. Files with zero content matches are filtered out. Pressing Escape clears the search.
 4. **File Tree:** Collapsible section showing the viewed notebook's files with progress bar during initialization/reconciliation.
 5. **Unlinked Notes:** Collapsible section (collapsed by default) showing orphan notes in the viewed notebook.
-6. **Links Panel:** Collapsible sections for outbound links and backlinks of the **active note** (from the active notebook, which follows editor focus).
+The **Links Panel** is a separate view rather than another section of this list, so it can be collapsed, reordered, or dragged to the secondary sidebar — which is where a backlinks panel belongs while writing. It follows the **active note** (the editor), not the viewed notebook, and renders up to five sections: Links, Backlinks, Mentions, Mentioned By, and Related Notes, omitting any that are empty.
 
 All tree-like lists (files, links, unlinked notes, search results) use a shared `TreeItem` component with label, sublabel (responsive — drops below label when sidebar is narrow), icon (`@vscode/codicons`), and optional badge. Sections use a shared `CollapsibleSection` component with inverted-color headers (foreground as background, vice versa).
 
@@ -305,7 +329,7 @@ All tree-like lists (files, links, unlinked notes, search results) use a shared 
 ### 6.5 Command Palette Highlights
 * `Onyvore: Initialize Notebook` (Create a new notebook in a directory selected via the directory picker).
 * `Onyvore: Discover Notebooks` (Re-scan the workspace for `.onyvore/` directories and register any newly discovered notebooks).
-* `Onyvore: Search Notebook` (Focus the search bar, scoped to the viewed notebook).
+* `Onyvore: Search Notebook` (Focus the search bar, scoped to the viewed notebook. Results support arrow-key navigation and Enter to open; Escape clears).
 * `Onyvore: Rebuild Notebook` (Delete all derived artifacts — `index.bin`, `links.json`, `metadata.json` — from `.onyvore/` and trigger a full re-index from scratch. Useful as a recovery mechanism if the index or link graph enters a bad state).
 
 ---
@@ -351,7 +375,6 @@ Obsidian's linking model assumes a human author creating `[[wikilinks]]` manuall
 ---
 
 ## 9. Future Considerations
-* **Wikilink Authoring Support:** Completion when typing `[[`, ctrl-click navigation, hover previews, and diagnostics for wikilinks that resolve to nothing. The diagnostics are also how renames are handled: because Onyvore never rewrites user files, a link broken by a rename is reported rather than silently repaired, with a quick fix to create the missing note or repoint the link. The user makes the edit, so the zero-mutation guarantee holds.
 * **Link Graph Visualization:** With the computed link graph already in place, a read-only force-directed graph view (via a VS Code Webview) is a natural addition. The data layer exists; only the rendering is needed.
 * **Multilingual NLP:** compromise is English-only. Multilingual noun-phrase extraction would require evaluating alternative pure-JS NLP libraries or a pluggable extraction backend.
 * **Cross-Notebook Search:** A workspace-level search that spans all notebooks, with results grouped by notebook. Requires aggregating across independent indexes.

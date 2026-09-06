@@ -78,9 +78,15 @@ Renders up to five collapsible sections, omitting any that are empty:
 
 Default open state cascades: wikilinks open when present, mentions open when there are no wikilinks, related notes open only when nothing else is there.
 
+The panel is rendered by its own webview view, not as a section of the sidebar. `window.__ONYVORE_VIEW__ === 'links'` (injected by the extension host) makes `App` render only this panel, so one bundle serves both views.
+
 ### LinkList
 
 Renders one bucket. `notePath` is already the *other* note — the target for outbound links, the source for inbound — so a single component serves both directions. Icons distinguish edge type (link / quote / references), and a count badge is shown for `mention` and `similar` entries but not for wikilinks, which have no meaningful count.
+
+### SearchBar
+
+Always visible above the tree. Results support arrow-key navigation with Enter to open and Escape to clear, and the highlighted result scrolls into view. `Onyvore: Search Notebook` dispatches `searchResults.show`, which focuses and selects the input.
 
 ### SearchOverlay
 

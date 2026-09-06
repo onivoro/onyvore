@@ -9,6 +9,12 @@ import { SearchBar } from './components/SearchBar';
 import { NotebookSelector } from './components/NotebookSelector';
 import { PlusIcon, RebuildIcon } from './components/Icons';
 
+/**
+ * The links view renders the same bundle as the sidebar; the extension host
+ * injects this flag so one build can serve both views.
+ */
+const isLinksView = (window as any).__ONYVORE_VIEW__ === 'links';
+
 export default function App() {
   const { sendRequest } = useRpc();
   const [pickRequestId, setPickRequestId] = useState<string | null>(null);
@@ -31,7 +37,10 @@ export default function App() {
 
   // Tell the extension host which notebook is on screen, so palette commands
   // (Search, Rebuild) act on the same notebook as the sidebar's own buttons.
+  // Only the sidebar owns this — the Links view has no notebook selector and
+  // would otherwise fight it for the same piece of host state.
   useEffect(() => {
+    if (isLinksView) return;
     sendRequest({
       method: onyvoreRpcMethods.SET_VIEWED_NOTEBOOK,
       params: { notebookId: currentNotebookId },
@@ -83,6 +92,18 @@ export default function App() {
       params: { notebookId: currentNotebookId },
     });
   };
+
+  // The Links view follows the editor, not the sidebar selection, so it needs
+  // none of the toolbar, selector, search, or tree.
+  if (isLinksView) {
+    return (
+      <div className="ony-app">
+        <div className="ony-app__links ony-app__links--standalone">
+          <LinksPanel />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ony-app">

@@ -1,6 +1,15 @@
-import { useState, useCallback, useRef, type ReactNode } from 'react';
+import {
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  type ReactNode,
+} from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { useRpc, useRpcResponse } from '../hooks/use-rpc-request.hook';
 import { onyvoreRpcMethods } from '@onivoro/isomorphic-onyvore';
+import { searchResultsActions } from '../state/slices/search-results.slice';
+import type { RootState } from '../state/types/root-state.type';
 import { SearchIcon, FileIcon } from './Icons';
 import { TreeItem } from './TreeItem';
 
@@ -29,21 +38,46 @@ interface SearchBarProps {
 
 export function SearchBar({ notebookId }: SearchBarProps) {
   const { sendRequest } = useRpc();
+  const dispatch = useDispatch();
   const inputRef = useRef<HTMLInputElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [selected, setSelected] = useState(0);
   const [requestId, setRequestId] = useState<string | null>(null);
   const response = useRpcResponse(requestId);
 
-  if (response?.result && requestId) {
+  // `Onyvore: Search Notebook` sets this so the command actually focuses the box.
+  const showRequested = useSelector(
+    (state: RootState) => state.searchResults.visible,
+  );
+
+  useEffect(() => {
+    if (!showRequested) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    dispatch(searchResultsActions.hide());
+  }, [showRequested, dispatch]);
+
+  useEffect(() => {
+    if (!response?.result) return;
     const data = response.result as { results: SearchResult[] };
-    setResults(data.results);
+    setResults(data.results ?? []);
+    setSelected(0);
     setRequestId(null);
-  }
+  }, [response]);
+
+  const clear = useCallback(() => {
+    setQuery('');
+    setResults([]);
+    setSelected(0);
+  }, []);
 
   const handleSearch = useCallback(
     (searchQuery: string) => {
       setQuery(searchQuery);
+      setSelected(0);
       if (!notebookId || searchQuery.trim().length === 0) {
         setResults([]);
         return;
@@ -57,20 +91,43 @@ export function SearchBar({ notebookId }: SearchBarProps) {
     [notebookId, sendRequest],
   );
 
-  const handleResultClick = (relativePath: string) => {
-    sendRequest({
-      method: onyvoreRpcMethods.OPEN_FILE,
-      params: { notebookId, relativePath },
-    });
-    setQuery('');
-    setResults([]);
-  };
+  const openResult = useCallback(
+    (relativePath: string) => {
+      sendRequest({
+        method: onyvoreRpcMethods.OPEN_FILE,
+        params: { notebookId, relativePath },
+      });
+      clear();
+    },
+    [notebookId, sendRequest, clear],
+  );
+
+  // Keep the highlighted result in view while arrowing through a long list.
+  useEffect(() => {
+    resultsRef.current
+      ?.querySelector('[data-selected="true"]')
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
-      setQuery('');
-      setResults([]);
+      clear();
       inputRef.current?.blur();
+      return;
+    }
+
+    if (results.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelected((i) => (i + 1) % results.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelected((i) => (i - 1 + results.length) % results.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const result = results[selected];
+      if (result) openResult(result.relativePath);
     }
   };
 
@@ -92,8 +149,8 @@ export function SearchBar({ notebookId }: SearchBarProps) {
         />
       </div>
       {results.length > 0 && (
-        <div className="ony-searchbar__results">
-          {results.map((result) => (
+        <div className="ony-searchbar__results" ref={resultsRef}>
+          {results.map((result, index) => (
             <div key={result.relativePath} className="ony-searchbar__result-group">
               <ul className="ony-tree">
                 <TreeItem
@@ -101,14 +158,15 @@ export function SearchBar({ notebookId }: SearchBarProps) {
                   sublabel={result.relativePath}
                   icon={<FileIcon />}
                   badge={result.snippets.length}
-                  onClick={() => handleResultClick(result.relativePath)}
+                  selected={index === selected}
+                  onClick={() => openResult(result.relativePath)}
                 />
               </ul>
               {result.snippets.map((snippet, i) => (
                 <div
                   key={i}
                   className="ony-searchbar__snippet"
-                  onClick={() => handleResultClick(result.relativePath)}
+                  onClick={() => openResult(result.relativePath)}
                 >
                   {highlightSnippet(snippet, query)}
                 </div>

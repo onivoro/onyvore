@@ -5,18 +5,31 @@ interface TreeItemProps {
   sublabel?: string;
   icon?: ReactNode;
   badge?: string | number;
+  /** Highlighted by keyboard navigation. */
+  selected?: boolean;
   onClick: () => void;
 }
 
-export function TreeItem({ label, sublabel, icon, badge, onClick }: TreeItemProps) {
+export function TreeItem({
+  label,
+  sublabel,
+  icon,
+  badge,
+  selected,
+  onClick,
+}: TreeItemProps) {
   return (
     <li
-      className="ony-tree__item"
+      className={`ony-tree__item${selected ? ' ony-tree__item--selected' : ''}`}
       tabIndex={0}
       role="button"
+      data-selected={selected ? 'true' : undefined}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') onClick();
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onClick();
+        }
       }}
     >
       {icon && <span className="ony-tree__icon">{icon}</span>}
