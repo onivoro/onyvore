@@ -8,14 +8,13 @@ import {
   type NotebookInfo,
   type LinksForNote,
 } from '@onivoro/isomorphic-onyvore';
-import { NlpService } from './nlp.service';
 import { SearchIndexService } from './search-index.service';
 import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
 import { ReconciliationService } from './reconciliation.service';
-import { TfidfService } from './tfidf.service';
-import { WikilinkService } from './wikilink.service';
+import { IndexingService } from './indexing.service';
+import { IgnoreService } from './ignore.service';
 
 interface RegisteredNotebook {
   id: string;
@@ -31,14 +30,13 @@ export class OnyvoreMessageHandlerService {
 
   constructor(
     @Inject(MESSAGE_BUS) private readonly messageBus: MessageBus,
-    private readonly nlpService: NlpService,
     private readonly searchIndexService: SearchIndexService,
     private readonly linkGraphService: LinkGraphService,
     private readonly metadataService: MetadataService,
     private readonly persistenceService: PersistenceService,
     private readonly reconciliationService: ReconciliationService,
-    private readonly tfidfService: TfidfService,
-    private readonly wikilinkService: WikilinkService,
+    private readonly indexingService: IndexingService,
+    private readonly ignoreService: IgnoreService,
   ) {}
 
   @StdioHandler('health')
@@ -68,10 +66,8 @@ export class OnyvoreMessageHandlerService {
   }): Promise<{ success: boolean }> {
     const { notebookId } = params;
     this.notebooks.delete(notebookId);
-    this.searchIndexService.removeIndex(notebookId);
-    this.linkGraphService.removeGraph(notebookId);
-    this.metadataService.remove(notebookId);
-    this.tfidfService.removeCorpus(notebookId);
+    this.indexingService.clearNotebook(notebookId);
+    this.ignoreService.remove(notebookId);
     return { success: true };
   }
 
@@ -84,16 +80,8 @@ export class OnyvoreMessageHandlerService {
     if (!notebook) return { success: false };
 
     notebook.status = 'initializing';
-    // Run initialization asynchronously so the response returns immediately
-    this.reconciliationService
-      .initialize(notebookId)
-      .then(() => {
-        notebook.status = 'ready';
-      })
-      .catch((err) => {
-        console.error(`[Onyvore] Initialization failed for ${notebookId}:`, err);
-        notebook.status = 'ready';
-      });
+    // Run asynchronously so the response returns immediately.
+    this.runBuild(notebook, 'Initialization');
 
     return { success: true };
   }
@@ -108,16 +96,23 @@ export class OnyvoreMessageHandlerService {
 
     notebook.status = 'reconciling';
 
-    // Load persisted state (includes TF-IDF corpus from tfidf.json)
-    await this.persistenceService.loadAll(notebookId);
+    // The four artifacts are written independently, so a torn write can leave
+    // them disagreeing about what is indexed. If any fails to load, rebuild
+    // rather than serving a half-loaded index that metadata.json contradicts.
+    const loaded = await this.persistenceService.loadAll(notebookId);
 
-    // Register files from metadata for graph orphan detection
-    const files = this.metadataService.getAllFiles(notebookId);
-    for (const relPath of Object.keys(files)) {
+    if (!loaded) {
+      this.indexingService.clearNotebook(notebookId);
+      notebook.status = 'initializing';
+      this.runBuild(notebook, 'Rebuild after incomplete artifacts');
+      return { success: true };
+    }
+
+    // Register known files so orphan detection sees notes with no edges.
+    for (const relPath of Object.keys(this.metadataService.getAllFiles(notebookId))) {
       this.linkGraphService.registerFile(notebookId, relPath);
     }
 
-    // Run reconciliation asynchronously
     this.reconciliationService
       .reconcile(notebookId)
       .then(() => {
@@ -139,75 +134,53 @@ export class OnyvoreMessageHandlerService {
 
     const fs = await import('fs/promises');
 
-    for (const event of events) {
-      const { type, relativePath } = event;
-      const title = this.searchTitleFromPath(relativePath);
+    const deletes = events.filter((e) => e.type === 'delete');
+    const upserts = events.filter(
+      (e) =>
+        e.type !== 'delete' && !this.ignoreService.ignores(notebookId, e.relativePath),
+    );
 
-      switch (type) {
-        case 'create': {
-          const fullPath = path.join(notebookId, relativePath);
-          const content = await fs.readFile(fullPath, 'utf-8');
-          const stat = await fs.stat(fullPath);
+    // Deletes first: every edge computation below reads the corpus, so it has
+    // to reflect the removals before anything is derived from it.
+    for (const event of deletes) {
+      await this.indexingService.removeDocument(notebookId, event.relativePath);
+    }
 
-          await this.searchIndexService.addDocument(
-            notebookId,
-            relativePath,
-            title,
-            content,
-          );
+    // Register the whole batch, then derive edges once per file. Computing
+    // edges inline would run a full corpus pass per file in the batch.
+    const contentCache = new Map<string, string>();
+    const created = new Set<string>();
 
-          const terms = this.nlpService.extractTerms(content);
-          this.tfidfService.setDocument(notebookId, relativePath, terms);
-          this.linkGraphService.registerFile(notebookId, relativePath);
-
-          const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
-          this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relativePath, implicitEdges);
-
-          const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relativePath, content);
-          this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relativePath, explicitEdges);
-
-          this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
-          break;
+    for (const event of upserts) {
+      const fullPath = path.join(notebookId, event.relativePath);
+      try {
+        const [content, stat] = await Promise.all([
+          fs.readFile(fullPath, 'utf-8'),
+          fs.stat(fullPath),
+        ]);
+        contentCache.set(event.relativePath, content);
+        if (event.type === 'create' || !this.metadataService.getFile(notebookId, event.relativePath)) {
+          created.add(event.relativePath);
         }
-        case 'change': {
-          const fullPath = path.join(notebookId, relativePath);
-          const content = await fs.readFile(fullPath, 'utf-8');
-          const stat = await fs.stat(fullPath);
-
-          await this.searchIndexService.updateDocument(
-            notebookId,
-            relativePath,
-            title,
-            content,
-          );
-
-          const terms = this.nlpService.extractTerms(content);
-          this.tfidfService.setDocument(notebookId, relativePath, terms);
-
-          const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relativePath);
-          this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relativePath, implicitEdges);
-
-          const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relativePath, content);
-          this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relativePath, explicitEdges);
-
-          this.metadataService.setFile(notebookId, relativePath, stat.mtimeMs);
-          break;
-        }
-        case 'delete': {
-          await this.searchIndexService.removeDocument(notebookId, relativePath);
-          this.tfidfService.removeDocument(notebookId, relativePath);
-          this.linkGraphService.removeAllEdgesForFile(notebookId, relativePath);
-          this.linkGraphService.unregisterFile(notebookId, relativePath);
-          this.metadataService.removeFile(notebookId, relativePath);
-          break;
-        }
+        await this.indexingService.registerDocument(
+          notebookId,
+          event.relativePath,
+          content,
+          stat.mtimeMs,
+        );
+      } catch {
+        // Deleted or replaced between the event firing and this read.
       }
     }
 
-    // Persist after processing the batch
+    for (const [relativePath, content] of contentCache) {
+      this.indexingService.computeEdges(notebookId, relativePath, content, {
+        refreshInbound: created.has(relativePath),
+      });
+    }
+
     await this.persistenceService.persistAll(notebookId);
 
-    // Notify extension that the index has been updated
     this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_INDEX_UPDATED, {
       notebookId,
     });
@@ -215,54 +188,34 @@ export class OnyvoreMessageHandlerService {
     return { success: true };
   }
 
+  /**
+   * `.onyvoreignore` changed. Reloading the rules and re-running reconciliation
+   * produces exactly the right diff: files the new rules exclude are missing
+   * from the scan and get removed, files they now admit look newly created.
+   */
   @StdioHandler(onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED)
   async handleIgnoreChanged(params: {
     notebookId: string;
-    ignoredPaths: string[];
-    includedPaths: string[];
   }): Promise<{ success: boolean }> {
-    const { notebookId, ignoredPaths, includedPaths } = params;
-    const fs = await import('fs/promises');
+    const { notebookId } = params;
+    const notebook = this.notebooks.get(notebookId);
+    if (!notebook) return { success: false };
 
-    // Remove newly-ignored files
-    for (const relPath of ignoredPaths) {
-      await this.searchIndexService.removeDocument(notebookId, relPath);
-      this.tfidfService.removeDocument(notebookId, relPath);
-      this.linkGraphService.removeAllEdgesForFile(notebookId, relPath);
-      this.linkGraphService.unregisterFile(notebookId, relPath);
-      this.metadataService.removeFile(notebookId, relPath);
-    }
+    notebook.status = 'reconciling';
 
-    // Process newly-included files
-    for (const relPath of includedPaths) {
-      const fullPath = path.join(notebookId, relPath);
-      try {
-        const content = await fs.readFile(fullPath, 'utf-8');
-        const stat = await fs.stat(fullPath);
-        const title = this.searchTitleFromPath(relPath);
-
-        await this.searchIndexService.addDocument(notebookId, relPath, title, content);
-
-        const terms = this.nlpService.extractTerms(content);
-        this.tfidfService.setDocument(notebookId, relPath, terms);
-        this.linkGraphService.registerFile(notebookId, relPath);
-
-        const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
-        this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relPath, implicitEdges);
-
-        const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relPath, content);
-        this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relPath, explicitEdges);
-
-        this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
-      } catch {
-        // File may have been deleted between detection and processing
-      }
-    }
-
-    await this.persistenceService.persistAll(notebookId);
-    this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_INDEX_UPDATED, {
-      notebookId,
-    });
+    this.reconciliationService
+      .reconcile(notebookId)
+      .then(() => {
+        notebook.status = 'ready';
+        this.messageBus.sendNotification(
+          onyvoreRpcMethods.NOTEBOOK_INDEX_UPDATED,
+          { notebookId },
+        );
+      })
+      .catch((err) => {
+        console.error(`[Onyvore] Ignore re-evaluation failed for ${notebookId}:`, err);
+        notebook.status = 'ready';
+      });
 
     return { success: true };
   }
@@ -334,36 +287,24 @@ export class OnyvoreMessageHandlerService {
     const notebook = this.notebooks.get(notebookId);
     if (!notebook) return { success: false };
 
-    // Delete all derived artifacts
     await this.persistenceService.deleteArtifacts(notebookId);
+    this.indexingService.clearNotebook(notebookId);
 
-    // Clear in-memory state
-    this.searchIndexService.removeIndex(notebookId);
-    this.linkGraphService.removeGraph(notebookId);
-    this.metadataService.remove(notebookId);
-    this.tfidfService.removeCorpus(notebookId);
-
-    // Re-initialize from scratch
     notebook.status = 'initializing';
-    this.reconciliationService
-      .initialize(notebookId)
-      .then(() => {
-        notebook.status = 'ready';
-      })
-      .catch((err) => {
-        console.error(`[Onyvore] Rebuild failed for ${notebookId}:`, err);
-        notebook.status = 'ready';
-      });
+    this.runBuild(notebook, 'Rebuild');
 
     return { success: true };
   }
 
-  private searchTitleFromPath(relativePath: string): string {
-    const basename = path.basename(relativePath, '.md');
-    const dir = path.dirname(relativePath);
-    if (dir && dir !== '.') {
-      return `${path.basename(dir)} ${basename}`;
-    }
-    return basename;
+  /** Run a full build in the background, always clearing the busy status. */
+  private runBuild(notebook: RegisteredNotebook, label: string): void {
+    this.reconciliationService
+      .initialize(notebook.id)
+      .catch((err) => {
+        console.error(`[Onyvore] ${label} failed for ${notebook.id}:`, err);
+      })
+      .finally(() => {
+        notebook.status = 'ready';
+      });
   }
 }

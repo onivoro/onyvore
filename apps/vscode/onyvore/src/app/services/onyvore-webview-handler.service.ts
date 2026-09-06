@@ -60,6 +60,12 @@ export class OnyvoreWebviewHandlerService {
     return { success: true, notebookId: notebook.id };
   }
 
+  @WebviewHandler(onyvoreRpcMethods.SET_VIEWED_NOTEBOOK)
+  setViewedNotebook(params: { notebookId: string | null }): { success: boolean } {
+    this.activeNotebook.setViewedNotebookId(params.notebookId ?? null);
+    return { success: true };
+  }
+
   @WebviewHandler(onyvoreRpcMethods.GET_ACTIVE_NOTEBOOK)
   getActiveNotebook(): {
     notebookId: string | null;

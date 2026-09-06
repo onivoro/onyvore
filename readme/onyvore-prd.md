@@ -76,12 +76,12 @@ The parent notebook's file watcher, search index, and link graph skip any subdir
 ### 4.1 Knowledge Organization
 * **Notebook Sidebar:** A dedicated sidebar panel accessible via an activity bar icon (separate from VS Code's native Explorer). The sidebar shows **one notebook at a time** — the "viewed notebook." When multiple notebooks exist, a **dropdown selector with typeahead filtering** allows the user to switch between notebooks. A **plus (+) button** in the toolbar allows initializing a new notebook via a directory picker. Single-notebook workspaces auto-select that notebook; newly initialized notebooks are auto-selected in the dropdown. The sidebar coexists alongside the Explorer — it does not replace it.
 * **Automatic Link Graph:** Connections between notes are computed automatically within each notebook — no manual linking syntax required. Links do not cross notebook boundaries. See Section 4.4 for the linking algorithm.
-* **Links Panel:** A dedicated sidebar panel for the active note, divided into two sections:
-  * **Outbound Links:** Notes that the active note links *to* (noun phrases extracted from this note matched a target note's title). Clicking an entry navigates to the target note. Each entry shows the top matching noun phrase and aggregate occurrence count (e.g., "hotsauce (5 mentions) → hotsauce.md").
-  * **Inbound Links (Backlinks):** Notes that link *to* the active note (other notes contain noun phrases matching this note's title). Each entry shows the source note, top matching noun phrase, and aggregate occurrence count (e.g., "recipes.md — hotsauce (5 mentions)"). Clicking navigates to the source note.
-  Both sections are ranked by aggregate occurrence count (most mentions first). This provides bidirectional navigation — users can discover what the current note references and what references it.
-  When no markdown file is focused (non-markdown file open, no file open, or file is unmanaged), the Links Panel displays: "Open a note to see its links."
-* **Orphan Detection:** Notes with zero inbound and outbound links are surfaced as an "Unlinked Notes" section within the Notebook Sidebar, below the notebook's file tree. This keeps orphan discovery in the same context as notebook navigation. Computed directly from the link graph at zero additional cost.
+* **Links Panel:** A dedicated sidebar panel for the active note, showing three kinds of connection:
+  * **Links / Backlinks (`explicit`):** `[[wikilinks]]` the author wrote, and the notes whose wikilinks point back here. Directional. Clicking an entry navigates to the other note.
+  * **Mentions / Mentioned By (`mention`):** Notes whose titles this note mentions in prose, and notes that mention this one. Directional, ranked by occurrence count, and shown with that count (e.g. "hotsauce · 5"). This is the automatic linking that requires no syntax.
+  * **Related Notes (`similar`):** Notes with similar overall content, by TF-IDF cosine similarity. Symmetric — there is no direction to report — and ranked by similarity, shown as a 0–100 score rather than a count of anything.
+  Sections render only when they have entries. When no markdown file is focused (non-markdown file open, no file open, or file is unmanaged), the Links Panel displays: "Open a note to see its links."
+* **Orphan Detection:** Notes with no `explicit` and no `mention` edges in either direction are surfaced as an "Unlinked Notes" section within the Notebook Sidebar, below the notebook's file tree. `similar` edges are deliberately excluded from this calculation: cosine similarity connects nearly every note to something, so counting it would leave the list permanently empty and hide exactly the notes it exists to surface.
 
 ### 4.2 File Watching
 * **Continuous Monitoring:** Uses VS Code's `FileSystemWatcher` API to detect `.md` file creates, changes, and deletes within each notebook in real-time, regardless of the source. Non-markdown files are ignored by the watcher. Paths matching `.onyvoreignore` patterns are excluded (see Section 5.2). Subdirectories containing `.onyvore/` (nested notebooks) are excluded — each notebook manages its own watcher independently.
@@ -100,67 +100,112 @@ The parent notebook's file watcher, search index, and link graph skip any subdir
 * **Persistence:** All derived artifacts (`index.bin`, `links.json`, `metadata.json`) are written to disk on two triggers: after each debounced batch of incremental updates completes, and on extension deactivation (exit). This ensures a VS Code crash loses at most one debounce window (~300ms) of work. The persisted `index.bin` allows sub-100ms startup for large notebooks (10,000+ notes).
 
 ### 4.4 Automatic Linking
-Onyvore computes a link graph between notes within each notebook using deterministic noun-phrase extraction. The link graph and search index are intentionally separate pipelines — full-text search is broad and forgiving, while the link graph is selective and precise. The link graph feeds into search ranking (see Section 4.3) but does not constrain what is indexed. Links do not cross notebook boundaries.
+
+Onyvore computes a link graph between notes within each notebook. Links never cross notebook boundaries. The link graph and search index are intentionally separate pipelines — full-text search is broad and forgiving, while the link graph is selective and precise. The link graph feeds into search ranking (see Section 4.3) but does not constrain what is indexed.
 
 **v1 is English-only.** The NLP library (compromise) supports English noun-phrase extraction. Multilingual support is a future consideration.
 
-#### Trigger Model
-The link graph is updated via file watcher events (Section 4.2). Any filesystem change — whether from the extension, an external agent, or manual editing — triggers an incremental update. There is no separate "index operation" trigger; the file watcher is the single event source for both the search index and the link graph.
+#### Edge Types
 
-#### Initial Notebook Computation
-On first initialization (or when `.onyvore/` is absent/deleted), the full notebook must be scanned to build the search index, extract all noun phrases, and generate the link graph. This is a materially heavier operation than incremental updates and is handled as a **non-blocking background process:**
+Three kinds of edge coexist, and any pair of notes may be connected by more than one at a time. They are stored, ranked, and displayed separately because they mean different things and are trustworthy to different degrees.
 
-1. **Immediate availability:** The Notebook Sidebar and file editing are available immediately. The notebook is usable before initialization completes.
-2. **Progressive search and links:** Both the search index and link graph are populated incrementally as files are processed. Search, outbound links, and backlinks work immediately but return partial results until the scan completes. A status bar indicator shows initialization progress.
-3. **File watcher active during init:** Files created or modified during initialization are queued and processed after the initial scan completes, ensuring no changes are lost.
+| Type | Derived from | Direction | `count` means |
+| :--- | :--- | :--- | :--- |
+| `explicit` | A `[[wikilink]]` the author wrote | Directional — the source owns the link | Fixed (100); wikilinks are not counted |
+| `mention` | A noun phrase matching another note's title | Directional | Occurrences of the phrase |
+| `similar` | TF-IDF cosine similarity between documents | Symmetric — stored both ways | `similarity * 100` |
 
-Derived artifacts are persisted periodically during the initial scan (e.g., every N files processed). If VS Code crashes mid-initialization, the next startup enters the normal reconciliation path — `metadata.json` already tracks which files have been processed, so only the remaining files are scanned. The exact batching, concurrency, and memory management for the background computation pipeline require further design consideration beyond this specification.
-
-#### Startup Reconciliation
-When the extension activates and a notebook's `.onyvore/` directory already exists (i.e., not a first-time initialization), the persisted index and link graph may be stale — files could have been created, modified, or deleted while the extension was not running (e.g., by an AI agent, a script, or manual editing). Onyvore reconciles the persisted state against the current filesystem on every startup:
-
-1. **Load persisted state:** `index.bin`, `links.json`, and `metadata.json` are loaded from disk. Search and backlinks are immediately available using the persisted (potentially stale) data.
-2. **Diff against filesystem:** Onyvore compares the current filesystem state against `metadata.json` (which tracks known files and their last-seen modification times):
-   * **New files** (on disk but not in metadata) → processed via the Create path (index, extract, link).
-   * **Modified files** (modification time newer than recorded in metadata) → processed via the Change path (re-index, re-extract, rebuild edges).
-   * **Deleted files** (in metadata but no longer on disk) → processed via the Delete path (remove from index, metadata, and link graph; prune dangling backlinks).
-3. **Non-blocking:** Reconciliation runs as a background process using the same progressive model as initial computation. The notebook is fully usable during reconciliation — search and backlinks serve persisted data immediately, with corrections applied incrementally as diffs are processed.
-4. **File watcher starts immediately:** Real-time changes made during reconciliation are queued and processed after reconciliation completes.
-
-#### NLP Behavior (compromise)
-Compromise is the pure-JS NLP library used for noun phrase extraction. Its behavior has been empirically tested (see `tools/scripts/compromise-test.ts`) and the following characteristics inform the pipeline design:
-
-* **Unknown words default to nouns.** Made-up words (e.g., "onyvore") are reliably tagged as nouns regardless of casing or sentence position. Compromise does not require words to be in a dictionary.
-* **Casing does not affect extraction.** Both "Onyvore" and "onyvore" are extracted as nouns. Capitalized unknown words may additionally be tagged as ProperNouns, but extraction succeeds either way.
-* **Noun phrase grouping is greedy.** Compromise groups adjacent nouns into a single phrase. "onyvore search engine" is extracted as one phrase, not three separate nouns. This must be handled in the matching step (see below).
-* **Gerunds are excluded.** Words like "indexing" and "working" are tagged as verbs (Gerund), not nouns. This is desirable — it reduces noise.
-* **Hyphenated compounds are decomposed.** "machine-learning" is split into "machine" and "learning," both tagged as nouns.
-
-#### Extraction Pipeline
-1. **Parse:** Note content is processed through compromise to extract noun phrases.
-2. **Decompose:** Multi-word noun phrases are retained as-is and also decomposed into individual words. For example, "onyvore search engine" produces four candidates: "onyvore search engine" (full phrase), "onyvore", "search", "engine". A 4-word phrase like "onyvore search engine architecture" produces five candidates: the full phrase plus each individual word. No intermediate sub-spans are generated. Single-word phrases are not decomposed.
-3. **Filter — Stop Nouns:** All candidates (full phrases and individual words from decomposition) are filtered against a built-in static list of ~50-100 common nouns. Individual words from a decomposed phrase are filtered independently — e.g., "change management" decomposes to "change management", "change", "management"; "change" is removed by the stop list while "change management" (full phrase) and "management" survive. This list covers ultra-generic nouns (e.g., "time," "way," "thing," "part," "people," "day," "year," "example," "case," "place," "point," "fact," "hand," "end," "line," "number," "group," "area," "world," "work," "state," "system," "program," "question," "problem," "issue," "use," "kind," "sort," "type," "form," "set," "list," "level," "side," "head," "home," "office," "room," "result," "change," "order," "idea") as well as domain-common terms that would over-link in typical notebooks (e.g., "note," "file," "page," "document," "section," "item," "entry," "record," "version," "name," "title," "link," "tag," "folder," "draft"). The list is not user-configurable.
-4. **Filter — Minimum Length:** Single-character tokens and single-letter words are excluded.
-
-#### Matching
-Surviving noun phrases are matched **case-insensitively** against **note titles** registered in the title index. Each file registers multiple title variants:
-* **Basename title:** The file's basename without the `.md` extension (e.g., `overview` for `overview.md`).
-* **Path-qualified title:** For files in subdirectories, the parent directory name followed by the basename (e.g., `work overview` for `work/overview.md`). Root-level files do not register a path-qualified title.
-
-This disambiguates files that share the same basename across different directories. A noun phrase like "work overview" matches only `work/overview.md`, not `personal/overview.md`. The unqualified basename "overview" still matches both, producing edges to both — which is correct when the source note mentions the concept generically.
-
-Only titles are match targets — if a concept is important enough to be linked to, it should be its own note. This encourages atomic note-taking and produces fewer false positives.
-
-A match produces an edge in the link graph. **Self-links are excluded** — a note's own title is not a valid match target for noun phrases extracted from that same note.
-
-#### Edge Structure
-There is one edge per unique (source, target) pair. If multiple noun phrases from the same source note match the same target (e.g., "sourdough" as a direct extraction and as a constituent of "sourdough starter" both matching `sourdough.md`), their counts are summed into a single edge. The `noun` field stores the phrase with the highest individual count (for display in the Links Panel).
+Only `explicit` and `mention` count as "linked" for orphan detection. `similar` is a discovery aid, not a statement that two notes are related on purpose.
 
 ```json
-{ "source": "note-a.md", "target": "note-b.md", "noun": "sourdough", "count": 8 }
+{ "source": "recipes.md", "target": "hotsauce.md", "type": "mention", "noun": "hotsauce", "count": 8 }
 ```
 
-Aggregate occurrence count is used to rank links — notes with more mentions surface first in the Links Panel.
+#### Trigger Model
+The link graph is updated via file watcher events (Section 4.2). Any filesystem change — from the extension, an external agent, or manual editing — triggers an incremental update. There is no separate "index operation" trigger; the file watcher is the single event source for both the search index and the link graph.
+
+Indexing is two-phase, and the ordering is load-bearing. Every document in a batch is registered in the corpus *before* any edge is computed from it, because TF-IDF needs corpus-wide document frequency and mention matching needs every title registered. Computing edges while documents are still being added yields wrong scores and missing links.
+
+#### `explicit` — Wikilinks
+
+`[[target]]` and `[[target|display text]]` are parsed from note content, skipping fenced and inline code. Resolution is Obsidian-compatible:
+
+1. A trailing `.md` in the target is ignored.
+2. A target containing `/` is matched as a path, case-insensitively.
+3. Otherwise the target matches any note with that basename, case-insensitively.
+4. When several notes match, the shortest path wins.
+
+Unresolved wikilinks produce no edge. Because Onyvore never rewrites user files, renaming a note leaves wikilinks pointing at the old name — these are surfaced rather than silently repaired (see Section 9). When the missing target is later created, cached link text is re-resolved so the edge appears without waiting for the source note to change.
+
+#### `mention` — Noun Phrase to Title
+
+Onyvore extracts noun phrases from note content and matches them against note titles. This is the linking that requires no syntax from the author: connections are discovered, not authored.
+
+**NLP behavior (compromise).** Empirically tested; these characteristics inform the pipeline:
+
+* **Unknown words default to nouns.** Made-up words (e.g. "onyvore") are reliably tagged as nouns regardless of casing or position. No dictionary is required.
+* **Casing does not affect extraction.** Both "Onyvore" and "onyvore" are extracted.
+* **Noun phrase grouping is greedy.** "onyvore search engine" is one phrase, not three — handled by decomposition below.
+* **Gerunds are excluded.** "indexing" and "working" are tagged as verbs, which usefully reduces noise.
+* **Hyphenated compounds are decomposed.** "machine-learning" splits into "machine" and "learning".
+
+**Extraction pipeline.**
+
+1. **Parse:** Content is processed through compromise; nouns are lemmatized to singular form so "clusters" and "cluster" are one term.
+2. **Decompose:** Multi-word phrases are kept as-is *and* split into individual words. "onyvore search engine" yields four candidates: the full phrase plus each word. No intermediate sub-spans are generated. Single-word phrases are not decomposed.
+3. **Filter — stop nouns:** All candidates are checked against a built-in list of ~65 ultra-generic and PKM-common nouns ("thing", "note", "file", "version", …). Words from a decomposed phrase are filtered independently: "change management" decomposes to "change management", "change", "management"; "change" is dropped while the full phrase and "management" survive. The list is not user-configurable.
+4. **Filter — minimum length:** Single-character tokens are excluded.
+
+**Matching.** Surviving phrases are matched case-insensitively against note titles. Each note registers two title variants:
+
+* **Basename title:** the filename without `.md` (`overview` for `overview.md`).
+* **Path-qualified title:** the parent directory plus the basename (`work overview` for `work/overview.md`). Root-level notes register only the basename.
+
+This disambiguates notes sharing a basename: "work overview" matches only `work/overview.md`, while the bare "overview" matches both `work/overview.md` and `personal/overview.md` — correct when the source refers to the concept generically.
+
+Only titles are match targets. If a concept matters enough to link to, it should be its own note. This encourages atomic notes and produces fewer false positives. **Self-links are excluded** — a note's own title is not a valid target for phrases extracted from that note.
+
+There is one edge per (source, target) pair. When several phrases from one note match the same target (e.g. "sourdough" directly and as part of "sourdough starter"), their counts sum into a single edge, and the `noun` field stores the single phrase that contributed most.
+
+#### `similar` — Document Similarity
+
+Each note becomes a TF-IDF vector over its extracted terms; cosine similarity between vectors above a threshold (default 0.15) creates a symmetric edge in both directions. Terms appearing in every note have an IDF of zero and are discarded as non-discriminative.
+
+Two bounds keep this tractable, because an uncapped similarity graph is O(n²) in both computation and stored size:
+
+* **Per-note cap.** At most `maxSimilarPerNote` (default 10) related notes are kept per note, chosen by similarity. A pair survives if *either* endpoint ranks it in its own top matches, so capping never strips a note's strongest relationship.
+* **Cached vectors.** Vectors are computed once per corpus revision and reused. Without this, a single edit re-vectorizes the entire notebook on every save.
+
+Similarity scores are computed against the corpus as it stood when the edge was written. Because IDF shifts as the notebook grows, stored scores drift; they are refreshed on rebuild and whenever the containing note is reindexed.
+
+#### Incremental Update Behavior
+
+* **Create:** The note is indexed, its terms extracted, and its outbound edges of all three types computed. Inbound edges are also refreshed — notes already in the corpus may mention the new title, and wikilinks that previously failed to resolve may now find it.
+* **Change:** The note is re-indexed and its outbound edges rebuilt. Its `similar` edges are replaced in both directions, since similarity is symmetric.
+* **Delete:** The note is removed from the search index, term store, metadata, and link graph. Every edge touching it is pruned from both directions.
+* **Rename:** `FileSystemWatcher` emits delete + create. The delete prunes old edges; the create rebuilds them against the new name. The graph self-heals, so no stable file IDs are needed. Wikilinks written against the old name become unresolved and are surfaced as such.
+
+#### Initial Notebook Computation
+
+On first initialization (or when `.onyvore/` artifacts are absent), the full notebook is scanned to build the search index and link graph. This is materially heavier than incremental updates and runs as a **non-blocking background process:**
+
+1. **Immediate availability:** The sidebar and file editing are available immediately.
+2. **Progressive results:** Search and links populate as files are processed, returning partial results until the scan completes. A status indicator shows progress.
+3. **File watcher active during init:** Changes made during initialization are processed afterward, so nothing is lost.
+4. **Whole-corpus passes:** `similar` and `mention` edges are computed in a single sweep once every note is registered — cheaper and more accurate than per-file computation against a partial corpus.
+
+Derived artifacts are checkpointed periodically during the scan. If VS Code exits mid-initialization, the next startup enters the reconciliation path below and only the remaining work is done.
+
+#### Startup Reconciliation
+
+When the extension activates and a notebook's artifacts already exist, they may be stale — files can change while the extension is not running. Onyvore reconciles persisted state against the filesystem on every startup:
+
+1. **Load persisted state.** `index.bin`, `links.json`, `metadata.json`, and `tfidf.json` are loaded. Search and links are immediately available from persisted data.
+2. **Verify the artifact set.** Every artifact carries a format version, and all four must load. Because they are written as four independent files, a crash can leave them disagreeing about what is indexed — so a missing, unreadable, or out-of-version artifact triggers a full rebuild rather than serving a half-restored state.
+3. **Diff against the filesystem.** The current tree is compared to `metadata.json`: files on disk but not in metadata are **created**, files with a newer mtime are **modified**, files in metadata but no longer on disk are **deleted**. Each is processed through the matching path above.
+4. **Non-blocking.** Reconciliation runs in the background using the same progressive model, and the file watcher is active throughout.
+
+Reconciliation is also the mechanism behind `.onyvoreignore` changes (Section 5.2): reloading the rules turns newly-ignored files into deletions and newly-admitted files into creations, which is exactly the diff this already computes.
 
 ### 4.5 Metadata
 Onyvore derives metadata for each note and stores it in `metadata.json`. Metadata is computed from filesystem state:
@@ -171,17 +216,29 @@ Onyvore derives metadata for each note and stores it in `metadata.json`. Metadat
 ## 5. Technical Architecture
 
 ### 5.1 Data Persistence (`.onyvore/` Folder)
-Each notebook contains a `.onyvore/` directory with:
-* `index.bin`: A serialized binary snapshot of the Orama search index.
-* `links.json`: The computed link graph between all notes in the notebook.
-* `metadata.json`: Derived metadata for each note (last-seen modification time for reconciliation). See Section 4.5.
 
-All files in `.onyvore/` are derived artifacts. They can be deleted and fully regenerated from the notebook's `.md` files.
+Each notebook contains a `.onyvore/` directory. Its presence is what makes the directory a notebook.
+
+| File | Derived? | Contents |
+| :--- | :--- | :--- |
+| `notebook.json` | No | Marks the directory as a notebook. Survives `Rebuild`. |
+| `index.bin` | Yes | Serialized Orama search index, plus the path→document-id map used for precise removal. |
+| `links.json` | Yes | The computed link graph: every edge, of every type. |
+| `metadata.json` | Yes | Per-note last-seen modification time, used by reconciliation. |
+| `tfidf.json` | Yes | Per-note term frequencies and corpus document frequencies. |
+
+Every derived file carries a format `version`. A version this build does not recognize is treated as unreadable and the notebook rebuilds — the artifacts are disposable by design, so this is always cheaper and safer than maintaining compatibility shims.
+
+All derived files can be deleted and fully regenerated from the notebook's `.md` files; that is exactly what `Onyvore: Rebuild Notebook` does. `notebook.json` is not derived and is not deleted by a rebuild.
 
 ### 5.2 `.onyvoreignore`
 Users can create a `.onyvoreignore` file in the notebook root (as a sibling of `.onyvore/`) to exclude paths from indexing, linking, and file watching. Paths in the file are relative to the notebook root. The syntax follows `.gitignore` conventions (glob patterns, `#` comments, `!` negation). Each notebook's `.onyvoreignore` is self-contained — a parent notebook's ignore file does not propagate into nested notebooks.
 
-`.onyvoreignore` is user-authored and is not a derived artifact — it is not stored in `.onyvore/` and is not affected by `Onyvore: Rebuild Notebook`. The file watcher monitors `.onyvoreignore` for changes. When the file is modified, Onyvore re-evaluates all files against the new patterns: newly-ignored files are removed from the index and link graph; newly-included files are processed via the Create path. This is equivalent to a targeted partial rebuild.
+`.onyvoreignore` is user-authored and is not a derived artifact — it is not stored in `.onyvore/` and is not affected by `Onyvore: Rebuild Notebook`.
+
+The rules are evaluated by the stdio server, so one implementation covers filesystem scans (initialization, reconciliation, rebuild) as well as live file events. The extension host also keeps a copy to suppress watcher events early, but the server is authoritative — a rule that the host missed still excludes the file.
+
+When the file changes, Onyvore reloads the rules and re-runs reconciliation: newly-ignored files no longer appear in the scan and are removed from the index and link graph, while newly-admitted files look newly created and are processed as such.
 
 Examples:
 
@@ -259,7 +316,7 @@ All tree-like lists (files, links, unlinked notes, search results) use a shared 
 | :--- | :--- | :--- | :--- |
 | **Storage** | SQLite DB | Markdown Files | **Markdown Files** |
 | **Indexing** | Persistent DB | File Scan | **In-Memory (Orama)** |
-| **Linking** | Manual | Manual (`[[wikilinks]]`) | **Automatic (NLP-computed)** |
+| **Linking** | Manual | Manual (`[[wikilinks]]`) | **Wikilinks + automatic (NLP + similarity)** |
 | **File Mutation** | Yes | Yes (frontmatter) | **None (sidecar metadata)** |
 | **Multi-notebook workspace** | Single profile | One vault per window | **Multiple notebooks per workspace** |
 | **Portability** | Moderate | High | **Maximum (Self-Contained)** |
@@ -269,8 +326,8 @@ All tree-like lists (files, links, unlinked notes, search results) use a shared 
 
 Obsidian is Onyvore's closest competitor. Both are markdown-first, file-based knowledge management tools. The following distinctions define Onyvore's core value proposition:
 
-**1. Automatic linking vs. manual wikilinks.**
-Obsidian requires users to explicitly create `[[wikilinks]]` between notes. This means connections only exist where the user remembered to create them. Onyvore computes links automatically using NLP — every note is analyzed for noun phrases and matched against note titles across the notebook. Connections are discovered, not authored. For large knowledge bases, this surfaces relationships that manual linking would never capture.
+**1. Automatic linking in addition to manual wikilinks.**
+Obsidian supports `[[wikilinks]]` and nothing else, so connections exist only where the user remembered to create them. Onyvore supports the same wikilinks — they are the most precise signal available, because a human authored them deliberately — and adds two computed layers on top: noun phrases matched against note titles, and whole-document similarity. Connections are discovered as well as authored. For large knowledge bases, this surfaces relationships manual linking would never capture, without giving up the ones worth stating explicitly.
 
 **2. Zero file mutation vs. frontmatter injection.**
 Obsidian injects YAML frontmatter into files and rewrites content when links are updated or files are renamed. Onyvore never touches user files. All metadata, links, and indexes are sidecar artifacts in `.onyvore/`. This makes Onyvore safe for environments where files are authored by multiple tools — AI agents, scripts, CI pipelines — because there is no risk of Onyvore's modifications conflicting with external writes.
@@ -294,6 +351,7 @@ Obsidian's linking model assumes a human author creating `[[wikilinks]]` manuall
 ---
 
 ## 9. Future Considerations
+* **Wikilink Authoring Support:** Completion when typing `[[`, ctrl-click navigation, hover previews, and diagnostics for wikilinks that resolve to nothing. The diagnostics are also how renames are handled: because Onyvore never rewrites user files, a link broken by a rename is reported rather than silently repaired, with a quick fix to create the missing note or repoint the link. The user makes the edit, so the zero-mutation guarantee holds.
 * **Link Graph Visualization:** With the computed link graph already in place, a read-only force-directed graph view (via a VS Code Webview) is a natural addition. The data layer exists; only the rendering is needed.
 * **Multilingual NLP:** compromise is English-only. Multilingual noun-phrase extraction would require evaluating alternative pure-JS NLP libraries or a pluggable extraction backend.
 * **Cross-Notebook Search:** A workspace-level search that spans all notebooks, with results grouped by notebook. Requires aggregating across independent indexes.

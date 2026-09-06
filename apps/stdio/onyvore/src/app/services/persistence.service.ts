@@ -6,6 +6,13 @@ import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { TfidfService } from './tfidf.service';
 
+/**
+ * Artifact format version. Every derived file carries it, and a mismatch is
+ * treated as unreadable so the notebook rebuilds instead of accumulating
+ * compatibility shims for formats that were never released.
+ */
+const ARTIFACT_VERSION = 2;
+
 @Injectable()
 export class PersistenceService {
   constructor(
@@ -20,8 +27,7 @@ export class PersistenceService {
   }
 
   async persistAll(notebookId: string): Promise<void> {
-    const dir = this.onyvoreDir(notebookId);
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(this.onyvoreDir(notebookId), { recursive: true });
 
     await Promise.all([
       this.persistIndex(notebookId),
@@ -33,66 +39,52 @@ export class PersistenceService {
 
   async persistIndex(notebookId: string): Promise<void> {
     const data = await this.searchIndexService.serialize(notebookId);
-    if (!data) return;
-    await this.atomicWrite(
-      path.join(this.onyvoreDir(notebookId), 'index.bin'),
-      data,
-    );
+    await this.write(notebookId, 'index.bin', data ?? Buffer.from(''));
   }
 
   async persistLinks(notebookId: string): Promise<void> {
     const edges = this.linkGraphService.getEdgesForPersistence(notebookId);
-    const json = JSON.stringify({ edges }, null, 2);
-    await this.atomicWrite(
-      path.join(this.onyvoreDir(notebookId), 'links.json'),
-      json,
-    );
+    await this.writeJson(notebookId, 'links.json', { edges });
   }
 
   async persistMetadata(notebookId: string): Promise<void> {
     const data = this.metadataService.serialize(notebookId);
-    if (!data) return;
-    const json = JSON.stringify(data, null, 2);
-    await this.atomicWrite(
-      path.join(this.onyvoreDir(notebookId), 'metadata.json'),
-      json,
-    );
+    await this.writeJson(notebookId, 'metadata.json', data ?? { files: {} });
   }
 
   async persistTfidf(notebookId: string): Promise<void> {
     const data = this.tfidfService.serialize(notebookId);
-    if (!data) return;
-    const json = JSON.stringify(data, null, 2);
-    await this.atomicWrite(
-      path.join(this.onyvoreDir(notebookId), 'tfidf.json'),
-      json,
-    );
+    await this.writeJson(notebookId, 'tfidf.json', data ?? { tf: {}, df: {} });
   }
 
+  /**
+   * Load every artifact. Returns false if any is missing, unreadable, or from
+   * a different format version — the caller rebuilds rather than trusting a
+   * partially restored state.
+   */
   async loadAll(notebookId: string): Promise<boolean> {
-    const dir = this.onyvoreDir(notebookId);
-
     try {
-      await fs.access(dir);
+      await fs.access(this.onyvoreDir(notebookId));
     } catch {
       return false;
     }
 
-    const [indexLoaded, linksLoaded, metadataLoaded, tfidfLoaded] =
-      await Promise.all([
-        this.loadIndex(notebookId),
-        this.loadLinks(notebookId),
-        this.loadMetadata(notebookId),
-        this.loadTfidf(notebookId),
-      ]);
+    const results = await Promise.all([
+      this.loadIndex(notebookId),
+      this.loadLinks(notebookId),
+      this.loadMetadata(notebookId),
+      this.loadTfidf(notebookId),
+    ]);
 
-    return indexLoaded && linksLoaded && metadataLoaded && tfidfLoaded;
+    return results.every(Boolean);
   }
 
   async loadIndex(notebookId: string): Promise<boolean> {
     try {
-      const filePath = path.join(this.onyvoreDir(notebookId), 'index.bin');
-      const data = await fs.readFile(filePath);
+      const data = await fs.readFile(
+        path.join(this.onyvoreDir(notebookId), 'index.bin'),
+      );
+      if (data.length === 0) return false;
       await this.searchIndexService.deserialize(notebookId, data);
       return true;
     } catch {
@@ -101,54 +93,79 @@ export class PersistenceService {
   }
 
   async loadLinks(notebookId: string): Promise<boolean> {
-    try {
-      const filePath = path.join(this.onyvoreDir(notebookId), 'links.json');
-      const raw = await fs.readFile(filePath, 'utf-8');
-      const { edges } = JSON.parse(raw);
-      this.linkGraphService.loadEdges(notebookId, edges);
-      return true;
-    } catch {
-      return false;
-    }
+    const data = await this.readJson<{ edges: unknown }>(notebookId, 'links.json');
+    if (!data || !Array.isArray(data.edges)) return false;
+    this.linkGraphService.loadEdges(notebookId, data.edges);
+    return true;
   }
 
   async loadMetadata(notebookId: string): Promise<boolean> {
-    try {
-      const filePath = path.join(this.onyvoreDir(notebookId), 'metadata.json');
-      const raw = await fs.readFile(filePath, 'utf-8');
-      const data = JSON.parse(raw);
-      this.metadataService.load(notebookId, data);
-      return true;
-    } catch {
-      return false;
-    }
+    const data = await this.readJson<{ files: unknown }>(notebookId, 'metadata.json');
+    if (!data || typeof data.files !== 'object' || data.files === null) return false;
+    this.metadataService.load(notebookId, data as any);
+    return true;
   }
 
   async loadTfidf(notebookId: string): Promise<boolean> {
-    try {
-      const filePath = path.join(this.onyvoreDir(notebookId), 'tfidf.json');
-      const raw = await fs.readFile(filePath, 'utf-8');
-      const data = JSON.parse(raw);
-      this.tfidfService.deserialize(notebookId, data);
-      return true;
-    } catch {
-      return false;
-    }
+    const data = await this.readJson<{ tf: unknown; df: unknown }>(
+      notebookId,
+      'tfidf.json',
+    );
+    if (!data || !data.tf || !data.df) return false;
+    this.tfidfService.deserialize(notebookId, data as any);
+    return true;
   }
 
   async deleteArtifacts(notebookId: string): Promise<void> {
     const dir = this.onyvoreDir(notebookId);
-    const files = ['index.bin', 'links.json', 'metadata.json', 'tfidf.json'];
-    for (const file of files) {
+    for (const file of ['index.bin', 'links.json', 'metadata.json', 'tfidf.json']) {
       try {
         await fs.unlink(path.join(dir, file));
       } catch {
-        // File may not exist
+        // Already absent.
       }
     }
   }
 
-  private async atomicWrite(filePath: string, data: Buffer | string): Promise<void> {
+  private async writeJson(
+    notebookId: string,
+    fileName: string,
+    payload: object,
+  ): Promise<void> {
+    // Compact, not pretty-printed: these are machine-written artifacts and
+    // links.json in particular grows with the square of the notebook size.
+    await this.write(
+      notebookId,
+      fileName,
+      JSON.stringify({ version: ARTIFACT_VERSION, ...payload }),
+    );
+  }
+
+  private async readJson<T>(
+    notebookId: string,
+    fileName: string,
+  ): Promise<T | null> {
+    try {
+      const raw = await fs.readFile(
+        path.join(this.onyvoreDir(notebookId), fileName),
+        'utf-8',
+      );
+      const parsed = JSON.parse(raw);
+      if (parsed?.version !== ARTIFACT_VERSION) return null;
+      return parsed as T;
+    } catch {
+      return null;
+    }
+  }
+
+  private async write(
+    notebookId: string,
+    fileName: string,
+    data: Buffer | string,
+  ): Promise<void> {
+    const dir = this.onyvoreDir(notebookId);
+    await fs.mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, fileName);
     const tmpPath = `${filePath}.tmp`;
     await fs.writeFile(tmpPath, data);
     await fs.rename(tmpPath, filePath);

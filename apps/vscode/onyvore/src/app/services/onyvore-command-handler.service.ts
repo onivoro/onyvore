@@ -64,10 +64,10 @@ export class OnyvoreCommandHandlerService {
 
   @CommandHandler(onyvoreCommands.SEARCH_NOTEBOOK)
   async searchNotebook(): Promise<void> {
-    const notebookId = this.activeNotebook.getActiveNotebookId();
+    const notebookId = this.activeNotebook.getTargetNotebookId();
     if (!notebookId) {
       await this.vscode.window.showWarningMessage(
-        'No active notebook. Open a file within a notebook first.',
+        'No notebook selected. Open a note, or pick a notebook in the Onyvore sidebar.',
       );
       return;
     }
@@ -78,10 +78,12 @@ export class OnyvoreCommandHandlerService {
 
   @CommandHandler(onyvoreCommands.REBUILD_NOTEBOOK)
   async rebuildNotebook(): Promise<void> {
-    const notebookId = this.activeNotebook.getActiveNotebookId();
+    // Rebuild targets the notebook on screen, matching the sidebar's own
+    // rebuild button — otherwise the same action hits two different notebooks.
+    const notebookId = this.activeNotebook.getTargetNotebookId();
     if (!notebookId) {
       await this.vscode.window.showWarningMessage(
-        'No active notebook. Open a file within a notebook first.',
+        'No notebook selected. Open a note, or pick a notebook in the Onyvore sidebar.',
       );
       return;
     }

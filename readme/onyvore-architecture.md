@@ -243,12 +243,18 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | Service | Responsibility |
 |---|---|
 | `OnyvoreMessageHandlerService` | `@StdioHandler` methods — the JSON-RPC API surface. Routes requests to domain services |
-| `NlpService` | Wraps compromise. Extracts noun phrases from markdown content. Runs the extraction pipeline (PRD Section 4.4): parse → decompose → stop nouns → min length |
-| `SearchIndexService` | Wraps Orama. Manages per-notebook in-memory search indexes. Handles document insert/update/remove. Runs search queries with graph-boosted ranking. Serializes/deserializes `index.bin` |
-| `LinkGraphService` | Manages per-notebook link graphs. Matches noun phrases against note titles. Computes edges (one per source-target pair, aggregated counts). Handles create/change/delete/reverse-match operations. Serializes/deserializes `links.json` |
-| `MetadataService` | Manages per-notebook `metadata.json`. Tracks last-seen modification times. Provides the diff-against-filesystem API for reconciliation |
-| `PersistenceService` | Writes `index.bin`, `links.json`, `metadata.json` to disk. Called after each debounced batch and on deactivation. Handles periodic checkpointing during initial computation |
-| `ReconciliationService` | Runs on startup for existing notebooks. Loads persisted state, diffs against filesystem, processes deltas via create/change/delete paths. Sends progress notifications to extension host |
+| `IndexingService` | The shared indexing pipeline. Two phases: `registerDocument` populates every index, `computeEdges` derives links from the populated corpus. Used by file events, ignore changes, initialization, and reconciliation alike |
+| `NlpService` | Wraps compromise. Extracts and lemmatizes noun terms. Runs the extraction pipeline (PRD Section 4.4): parse → decompose → stop nouns → min length |
+| `TermStoreService` | Single owner of per-document term vectors, shared by `TfidfService` and `MentionService` so terms are stored once per notebook rather than once per consumer |
+| `SearchIndexService` | Wraps Orama. Manages per-notebook indexes and a `relativePath → document id` map so removal is exact. Runs queries with graph-boosted ranking. Serializes/deserializes `index.bin` |
+| `MentionService` | Owns the title index (basename + path-qualified variants) and computes `mention` edges by matching extracted phrases against note titles, in both directions |
+| `TfidfService` | Owns document-frequency state and computes `similar` edges by cosine similarity, with cached vectors and a per-note cap |
+| `WikilinkService` | Parses `[[wikilinks]]`, resolves them Obsidian-compatibly, and caches link text so edges appear when a missing target is later created |
+| `LinkGraphService` | Stores all edges with outbound/inbound indexes. Type-aware replacement (symmetric vs. directional), orphan detection that ignores `similar`, and `links.json` serialization |
+| `IgnoreService` | Loads and evaluates `.onyvoreignore` for the server, covering filesystem scans as well as live events |
+| `MetadataService` | Manages per-notebook `metadata.json`. Tracks last-seen modification times for reconciliation |
+| `PersistenceService` | Versioned atomic writes of `index.bin`, `links.json`, `metadata.json`, `tfidf.json`. Reports whether the full artifact set loaded, so callers can rebuild instead of trusting partial state |
+| `ReconciliationService` | Full initialization and startup reconciliation. Scans the filesystem, diffs against metadata, drives the two-phase pipeline, sends progress notifications |
 
 **StdioHandler methods (JSON-RPC API):**
 
@@ -257,9 +263,9 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `notebook.register` | ext → server | Register a discovered notebook (path, initial state) |
 | `notebook.unregister` | ext → server | Remove a notebook (e.g., `.onyvore/` deleted) |
 | `notebook.fileEvent` | ext → server | Batched file watcher events (create/change/delete array) |
-| `notebook.ignoreChanged` | ext → server | `.onyvoreignore` was modified — re-evaluate all files |
+| `notebook.ignoreChanged` | ext → server | `.onyvoreignore` was modified — reload rules and reconcile |
 | `notebook.search` | webview → server | Full-text search query for active notebook |
-| `notebook.getLinks` | webview → server | Get outbound + inbound links for a specific note |
+| `notebook.getLinks` | webview → server | Get all five link buckets for a specific note |
 | `notebook.getNotebooks` | webview → server | List all registered notebooks with their file trees |
 | `notebook.getOrphans` | webview → server | Get unlinked notes for a notebook |
 | `notebook.rebuild` | ext → server | Delete derived artifacts and re-index from scratch |
@@ -268,6 +274,7 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `openFile` | webview → ext | Open a note in the editor (`@WebviewHandler`) |
 | `pickDirectory` | webview → ext | Show native directory picker dialog (`@WebviewHandler`) |
 | `getActiveNotebook` | webview → ext | Get current active notebook context (`@WebviewHandler`) |
+| `setViewedNotebook` | webview → ext | Report which notebook the sidebar is showing, so palette commands target it (`@WebviewHandler`) |
 | `getConfiguration` | webview → ext | Read VS Code configuration (`@WebviewHandler`) |
 | `getWorkspaceFolders` | webview → ext | List workspace folders (`@WebviewHandler`) |
 
@@ -402,11 +409,15 @@ export interface NotebookFile {
 
 ```typescript
 // edge.types.ts
+export type EdgeType = 'explicit' | 'mention' | 'similar';
+
 export interface Edge {
   source: string;            // relative path of source note
   target: string;            // relative path of target note
-  noun: string;              // highest-count matching noun phrase (for display)
-  count: number;             // aggregate occurrence count
+  type: EdgeType;            // how the edge was derived
+  noun: string;              // matched phrase, or top shared term for `similar`
+  displayText?: string;      // [[target|display text]], `explicit` only
+  count: number;             // occurrences (`mention`) or similarity*100 (`similar`)
 }
 ```
 
@@ -425,16 +436,21 @@ export interface NotebookMetadata {
 ```typescript
 // links-panel.types.ts
 export interface LinkEntry {
-  notePath: string;          // relative path of the linked note
+  notePath: string;          // relative path of the other note
   noteTitle: string;         // basename (for display)
-  noun: string;              // top matching noun phrase
-  count: number;             // aggregate occurrence count
+  type: EdgeType;
+  noun: string;              // matched phrase or top shared term
+  displayText?: string;
+  count: number;
 }
 
 export interface LinksForNote {
   notePath: string;
-  outbound: LinkEntry[];     // ranked by count desc
-  inbound: LinkEntry[];      // ranked by count desc
+  explicitOutbound: LinkEntry[];  // sorted by title
+  explicitInbound: LinkEntry[];   // sorted by title
+  mentionOutbound: LinkEntry[];   // ranked by count desc
+  mentionInbound: LinkEntry[];    // ranked by count desc
+  similar: LinkEntry[];           // ranked by score desc; symmetric, so undirected
 }
 ```
 
@@ -458,130 +474,81 @@ export interface FileEventBatch {
 
 ## 4. Key Implementation Details
 
-### 4.1 NLP Pipeline (`NlpService`)
+### 4.1 Term Extraction (`NlpService`, `TermStoreService`)
+
+`NlpService.extractTerms` turns note content into a `Map<term, count>`:
 
 ```typescript
-import nlp from 'compromise';
-import { STOP_NOUNS } from '@onivoro/isomorphic-onyvore';
-
-interface ExtractionResult {
-  /** All surviving candidates with their occurrence counts */
-  phrases: Map<string, number>;  // normalized phrase → count
-}
-
-function extractNounPhrases(content: string): ExtractionResult {
-  const doc = nlp(content);
-  const rawPhrases: string[] = doc.nouns().out('array');
-  const phrases = new Map<string, number>();
-
-  for (const raw of rawPhrases) {
-    const normalized = raw.toLowerCase().trim();
-    if (normalized.length <= 1) continue;
-
-    const words = normalized.split(/\s+/);
-
-    // Full phrase
-    if (!STOP_NOUNS.has(normalized)) {
-      phrases.set(normalized, (phrases.get(normalized) ?? 0) + 1);
-    }
-
-    // Decompose: individual words (only for multi-word phrases)
-    if (words.length > 1) {
-      for (const word of words) {
-        if (word.length <= 1) continue;
-        if (STOP_NOUNS.has(word)) continue;
-        phrases.set(word, (phrases.get(word) ?? 0) + 1);
-      }
-    }
-  }
-
-  return { phrases };
-}
+const doc = nlp(content);
+const rawPhrases: string[] = doc.nouns().toSingular().out('array');
 ```
 
-### 4.2 Link Graph Computation (`LinkGraphService`)
+For each phrase: lowercase, trim, strip punctuation, drop anything of length ≤ 1. The full phrase is kept unless it is a stop noun, and multi-word phrases are additionally decomposed into their individual words, each filtered independently against `STOP_NOUNS`. `toSingular()` lemmatizes, so "clusters" and "cluster" are one term.
 
-The link graph is a per-notebook in-memory data structure with two indexes for efficient lookups:
+The resulting map is stored in `TermStoreService`, which owns per-document term vectors for the whole server. Both `TfidfService` and `MentionService` read the same maps — at the 10k-note target, storing them once per notebook rather than once per consumer is the difference between hundreds of megabytes and tens.
+
+### 4.2 Link Graph (`LinkGraphService` and the three edge producers)
+
+Three services each produce one edge type, and `LinkGraphService` stores all of them together.
 
 ```typescript
+type EdgeType = 'explicit' | 'mention' | 'similar';
+
 interface LinkGraph {
-  /** All edges, keyed by "source::target" */
+  /** All edges, keyed by "type::source::target" — the type is part of the key
+   *  so all three can coexist between the same pair of notes. */
   edges: Map<string, Edge>;
-
-  /** source path → set of edge keys */
   outboundIndex: Map<string, Set<string>>;
-
-  /** target path → set of edge keys */
   inboundIndex: Map<string, Set<string>>;
-
-  /** Cached noun phrases per file: relativePath → Map<normalizedPhrase, count> */
-  phraseCache: Map<string, Map<string, number>>;
-
-  /** All note title variants (lowercase): title → set of relative paths.
-   *  Each file registers its basename ("overview") plus, for files in subdirectories,
-   *  a path-qualified variant ("work overview" for work/overview.md). */
-  titleIndex: Map<string, Set<string>>;
+  /** Every known file, so a note with no edges can be reported as an orphan. */
+  files: Set<string>;
 }
 ```
 
-**Operations:**
+**`WikilinkService` → `explicit`.** Parses `[[target]]` and `[[target|display]]` after stripping fenced and inline code, then resolves each target against the notebook's file list: `.md` suffix ignored, `/` means path match, otherwise case-insensitive basename with shortest-path tiebreak. Parsed link text is cached per source file, which is what makes `computeInboundEdges` possible — when a previously missing target is created, the cached text is re-resolved and the edge appears without the source note changing.
 
-**Create** (new file added):
-1. Extract noun phrases → cache in `phraseCache`
-2. Register all title variants in `titleIndex` (basename + path-qualified for subdirectory files)
-3. Match phrases against `titleIndex` → add outbound edges (skip self-links)
-4. Reverse match: scan `phraseCache` of all other files for phrases matching any of this file's title variants → add inbound edges
+**`MentionService` → `mention`.** Maintains a title index mapping each lowercase title variant to the notes carrying it:
 
-**Change** (file modified):
-1. Remove all outbound edges for this file from `edges` and `outboundIndex`
-2. Re-extract noun phrases → update `phraseCache`
-3. Match new phrases against `titleIndex` → add outbound edges
-
-**Delete** (file removed):
-1. Remove all outbound edges for this file
-2. Remove all inbound edges pointing to this file
-3. Remove from `phraseCache` and `titleIndex` (all title variants)
-
-**Matching logic:**
 ```typescript
-function matchPhrasesAgainstTitles(
-  sourcePath: string,
-  phrases: Map<string, number>,
-  titleIndex: Map<string, Set<string>>,
-): Edge[] {
-  const sourceBasename = basename(sourcePath, '.md').toLowerCase();
-  const edgeMap = new Map<string, Edge>();  // "source::target" → Edge
+titleIndexes: Map<notebookId, Map<titleVariant, Set<relativePath>>>
+fileTitles:   Map<notebookId, Map<relativePath, string[]>>
+```
 
-  for (const [phrase, count] of phrases) {
-    const matchingPaths = titleIndex.get(phrase);
-    if (!matchingPaths) continue;
+`overview.md` registers `overview`; `work/overview.md` registers both `overview` and `work overview`. The second map exists so `unregisterFile` can remove exactly the variants a file added, without disturbing another note that shares a basename.
 
-    for (const targetPath of matchingPaths) {
-      // Self-link exclusion
-      if (targetPath === sourcePath) continue;
+`computeOutboundEdges` walks the source's terms, looks each up in the title index, skips self-matches, and aggregates per target: counts sum, and `noun` records the single strongest phrase. `computeInboundEdges` runs the same match in reverse over cached terms, which is how a newly created note picks up mentions that already existed.
 
-      const key = `${sourcePath}::${targetPath}`;
-      const existing = edgeMap.get(key);
-      if (existing) {
-        existing.count += count;
-        // Keep the noun with the highest individual count
-        if (count > (phrases.get(existing.noun) ?? 0)) {
-          existing.noun = phrase;
-        }
-      } else {
-        edgeMap.set(key, {
-          source: sourcePath,
-          target: targetPath,
-          noun: phrase,
-          count,
-        });
-      }
-    }
-  }
+**`TfidfService` → `similar`.** Holds document frequency and derives vectors on demand:
 
-  return Array.from(edgeMap.values());
+```typescript
+interface TfidfCorpus {
+  tf: NotebookTerms;   // borrowed from TermStoreService
+  df: Map<string, number>;
+  docCount: number;
+  version: number;     // bumped on every df/docCount mutation
+  cache: Map<string, CachedVector>;
+  cacheVersion: number;
 }
 ```
+
+`version` is the invalidation mechanism. Every TF-IDF vector depends on corpus-wide document frequency, so any edit invalidates all of them; the cache is rebuilt when `cacheVersion !== version` and reused otherwise. Without it, `computeEdgesForDocument` re-vectorizes the entire notebook on every save.
+
+Terms with `idf === 0` — present in every document — are dropped as non-discriminative, which is why a document whose only terms are universal produces no edges at all.
+
+Both entry points apply `maxSimilarPerNote`. In `computeAllEdges`, candidates are collected per note and a pair survives if *either* endpoint ranks it in its own top matches, so the cap never strips a note's single strongest relationship.
+
+**Type-aware replacement.** `LinkGraphService` exposes three replacement modes because the edge types have different ownership semantics:
+
+| Method | Used for | Removes |
+|---|---|---|
+| `replaceOutboundEdgesForFile` | `explicit`, `mention` | Only outbound edges of that type — the source owns its links |
+| `replaceInboundEdgesForFile` | `explicit`, `mention` on create | Only inbound edges of that type |
+| `replaceSymmetricEdgesForFile` | `similar` | Both directions — the file is equally source and target |
+| `replaceAllEdgesOfType` | Full rebuilds | Every edge of that type in the notebook |
+
+**Orphan detection** walks `files` and reports any note with no non-`similar` edge in either direction. Excluding `similar` is deliberate: cosine similarity connects nearly every note to something, so counting it would leave "Unlinked Notes" permanently empty.
+
+**Persistence.** `loadEdges` skips any edge whose `type` is not one of the three known values, rather than coercing unknown edges to a default — combined with the format version on `links.json`, a stale artifact rebuilds instead of silently loading as the wrong type.
 
 ### 4.3 Search Index (`SearchIndexService`)
 
@@ -633,9 +600,12 @@ async function persistArtifact(filePath: string, data: Buffer | string): Promise
 **`links.json` format:**
 ```json
 {
+  "version": 2,
   "edges": [
-    { "source": "recipes/sourdough.md", "target": "flour.md", "noun": "flour", "count": 3 },
-    { "source": "recipes/sourdough.md", "target": "starter.md", "noun": "sourdough starter", "count": 7 }
+    { "source": "recipes/sourdough.md", "target": "flour.md", "type": "mention", "noun": "flour", "count": 3 },
+    { "source": "recipes/sourdough.md", "target": "starter.md", "type": "explicit", "noun": "starter", "count": 100 },
+    { "source": "recipes/sourdough.md", "target": "bread.md", "type": "similar", "noun": "dough", "count": 42 },
+    { "source": "bread.md", "target": "recipes/sourdough.md", "type": "similar", "noun": "dough", "count": 42 }
   ]
 }
 ```
@@ -643,9 +613,10 @@ async function persistArtifact(filePath: string, data: Buffer | string): Promise
 **`metadata.json` format:**
 ```json
 {
+  "version": 2,
   "files": {
-    "recipes/sourdough.md": { "mtimeMs": 1711584000000 },
-    "flour.md": { "mtimeMs": 1711580400000 }
+    "recipes/sourdough.md": { "relativePath": "recipes/sourdough.md", "mtimeMs": 1711584000000 },
+    "flour.md": { "relativePath": "flour.md", "mtimeMs": 1711580400000 }
   }
 }
 ```
@@ -688,14 +659,19 @@ function onFileEvent(event: FileEvent) {
 ```
 
 **`.onyvoreignore` watching:**
-The extension host watches the `.onyvoreignore` file at `{notebookRoot}/.onyvoreignore` using a separate `FileSystemWatcher`. On change, it sends `notebook.ignoreChanged` to the stdio server, which re-evaluates all files against the new patterns.
+The extension host watches `{notebookRoot}/.onyvoreignore` with a separate `FileSystemWatcher`. On change it refreshes its local copy — so live events stop flowing for newly-ignored paths — and sends `notebook.ignoreChanged` carrying only the notebook id.
+
+The server owns the authoritative filter (`IgnoreService`) and responds by reloading the rules and re-running reconciliation. It does not need a path diff from the host: newly-ignored files simply stop appearing in the filesystem scan and are treated as deletions, while newly-admitted files look newly created. The host's copy is an optimization; the server's is correctness.
 
 ### 4.6 Startup Reconciliation (`ReconciliationService`)
 
 Runs in the stdio server when `notebook.reconcile` is received.
 
+Before diffing, the handler verifies the persisted artifact set. `PersistenceService.loadAll` returns false if any of the four files is missing, unreadable, or from a different format version — because they are written independently, a crash can leave `metadata.json` claiming files that `index.bin` does not contain. In that case the notebook is cleared and fully rebuilt rather than reconciled against state that is already inconsistent.
+
 ```typescript
 async function reconcile(notebookId: string): Promise<void> {
+  await this.ignoreService.load(notebookId);   // scans honor .onyvoreignore
   const metadata = await this.metadataService.load(notebookId);
   const currentFiles = await this.scanFilesystem(notebookId);  // all .md files
 
@@ -729,11 +705,21 @@ async function reconcile(notebookId: string): Promise<void> {
     this.sendProgress(notebookId, ++processed, total);
   }
 
-  // Then creates and modifications
+  // Register every changed document before deriving links from any of them:
+  // TF-IDF needs corpus-wide document frequency and mention matching needs
+  // every title present, so a one-pass loop would compute wrong edges.
   for (const path of [...created, ...modified]) {
     const content = await this.readFile(notebookId, path);
-    const eventType = created.includes(path) ? 'create' : 'change';
-    await this.processFileEvent(notebookId, { type: eventType, relativePath: path }, content);
+    contentCache.set(path, content);
+    await this.indexingService.registerDocument(notebookId, path, content, mtime);
+  }
+
+  for (const path of [...created, ...modified]) {
+    this.indexingService.computeEdges(notebookId, path, contentCache.get(path), {
+      // A new note may already be mentioned, or be the target of a wikilink
+      // that could not resolve until now.
+      refreshInbound: created.includes(path),
+    });
     this.sendProgress(notebookId, ++processed, total);
   }
 
@@ -753,10 +739,10 @@ Key sections of `apps/vscode/onyvore/package.json`:
   "name": "onyvore",
   "displayName": "Onyvore",
   "description": "Local-first personal knowledge management for VS Code",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "publisher": "onivoro",
   "engines": { "vscode": "^1.74.0" },
-  "categories": ["Other"],
+  "categories": ["Notebooks"],
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/main.js",
   "repository": {

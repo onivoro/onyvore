@@ -11,8 +11,14 @@ export interface LinkEntry {
 
 export interface LinksForNote {
   notePath: string;
+  /** Wikilinks this note authored. */
   explicitOutbound: LinkEntry[];
+  /** Wikilinks pointing at this note. */
   explicitInbound: LinkEntry[];
-  implicitOutbound: LinkEntry[];
-  implicitInbound: LinkEntry[];
+  /** Notes whose titles this note mentions. */
+  mentionOutbound: LinkEntry[];
+  /** Notes that mention this note's title. */
+  mentionInbound: LinkEntry[];
+  /** Similar notes. Symmetric, so there is no direction to report. */
+  similar: LinkEntry[];
 }

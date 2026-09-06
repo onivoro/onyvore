@@ -13,6 +13,8 @@
 
 # compiled output
 /dist
+dist/
+*.vsix
 /tmp
 /out-tsc
 /zips

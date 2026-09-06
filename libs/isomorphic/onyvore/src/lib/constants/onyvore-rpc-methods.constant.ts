@@ -22,6 +22,7 @@ export const onyvoreRpcMethods = {
   OPEN_FILE: 'openFile',
   PICK_DIRECTORY: 'pickDirectory',
   GET_ACTIVE_NOTEBOOK: 'getActiveNotebook',
+  SET_VIEWED_NOTEBOOK: 'setViewedNotebook',
   GET_CONFIGURATION: 'getConfiguration',
   GET_WORKSPACE_FOLDERS: 'getWorkspaceFolders',
 } as const;

@@ -16,6 +16,10 @@ import { PersistenceService } from './services/persistence.service';
 import { ReconciliationService } from './services/reconciliation.service';
 import { TfidfService } from './services/tfidf.service';
 import { WikilinkService } from './services/wikilink.service';
+import { MentionService } from './services/mention.service';
+import { TermStoreService } from './services/term-store.service';
+import { IndexingService } from './services/indexing.service';
+import { IgnoreService } from './services/ignore.service';
 
 const config = new AppStdioOnyvoreConfig();
 
@@ -39,6 +43,10 @@ const config = new AppStdioOnyvoreConfig();
     ReconciliationService,
     TfidfService,
     WikilinkService,
+    MentionService,
+    TermStoreService,
+    IndexingService,
+    IgnoreService,
   ],
   exports: [StdioMessageBus, MESSAGE_BUS],
 })

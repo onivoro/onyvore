@@ -145,6 +145,12 @@ export class FileWatcherService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * `.onyvoreignore` changed. The local filter is refreshed so live events stop
+   * flowing for newly-ignored paths, and the server re-evaluates the notebook —
+   * it owns the authoritative filter and can diff the full file list, which the
+   * watcher cannot.
+   */
   private async onIgnoreChanged(
     notebookId: string,
     rootPath: string,
@@ -152,15 +158,8 @@ export class FileWatcherService implements OnModuleDestroy {
   ): Promise<void> {
     this.loadIgnoreFile(rootPath, state);
 
-    // Determine which files changed status by comparing old and new filters
-    // For simplicity, send ignoreChanged to the server which does a full re-evaluation
-    await this.messageBus.sendRequest(
-      onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED,
-      {
-        notebookId,
-        ignoredPaths: [],
-        includedPaths: [],
-      },
-    );
+    await this.messageBus.sendRequest(onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED, {
+      notebookId,
+    });
   }
 }

@@ -29,6 +29,15 @@ export default function App() {
   const currentNotebookId =
     viewingId ?? activeNotebookId ?? (notebooks.length === 1 ? notebooks[0].id : null);
 
+  // Tell the extension host which notebook is on screen, so palette commands
+  // (Search, Rebuild) act on the same notebook as the sidebar's own buttons.
+  useEffect(() => {
+    sendRequest({
+      method: onyvoreRpcMethods.SET_VIEWED_NOTEBOOK,
+      params: { notebookId: currentNotebookId },
+    });
+  }, [currentNotebookId]);
+
   // When pick directory returns, initialize the notebook
   useEffect(() => {
     if (pickResponse?.result) {

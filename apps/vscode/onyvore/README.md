@@ -43,10 +43,10 @@ Four `@CommandHandler` methods corresponding to `contributes.commands` in `packa
 
 | Command | Behavior |
 |---|---|
-| `onyvore.initializeNotebook` | Opens a directory picker, creates `.onyvore/`, registers with the server, starts full initialization, sets up file watcher |
+| `onyvore.initializeNotebook` | Opens a directory picker, creates `.onyvore/` with its marker file, registers with the server, starts full initialization, sets up file watcher |
 | `onyvore.discoverNotebooks` | Re-scans workspace for `.onyvore/` directories, registers any new notebooks, sets up file watchers |
-| `onyvore.searchNotebook` | Sends `search.show` notification to the webview (which renders the `SearchOverlay`). Requires an active notebook. |
-| `onyvore.rebuildNotebook` | Confirmation dialog, then sends `notebook.rebuild` to the server. Requires an active notebook. |
+| `onyvore.searchNotebook` | Sends `search.show` notification to the webview. Targets the notebook shown in the sidebar, falling back to the active one. |
+| `onyvore.rebuildNotebook` | Confirmation dialog, then sends `notebook.rebuild` to the server. Targets the notebook shown in the sidebar, falling back to the active one. |
 
 Injects: `VSCODE_API`, `MESSAGE_BUS`, `WEBVIEW_PROVIDER`, `NotebookDiscoveryService`, `ActiveNotebookService`, `FileWatcherService`.
 
@@ -81,8 +81,8 @@ All server notifications are automatically broadcast to the webview by the frame
 
 Implements `OnModuleInit` — runs `discoverNotebooks()` on extension activation.
 
-- **Discovery**: Uses `vscode.workspace.findFiles('**/.onyvore')` to locate notebooks. Registers each with the stdio server via `notebook.register`, then triggers `notebook.reconcile`.
-- **Initialization**: Creates the `.onyvore/` directory, registers the notebook, triggers `notebook.initialize`.
+- **Discovery**: `findFiles('**/.onyvore/**')` locates any file inside a `.onyvore/` directory, and the notebook root is derived from the path. Matching the directory rather than one artifact matters because every artifact is derived — `Rebuild` deletes them all — and keying on `metadata.json` made a rebuilt notebook undiscoverable on the next reload. Each discovered notebook is registered via `notebook.register` and then reconciled. Notebooks predating the marker file get `.onyvore/notebook.json` backfilled.
+- **Initialization**: Creates `.onyvore/` and writes `notebook.json` — the one file there that is not derived — then registers the notebook and triggers `notebook.initialize`.
 - **File resolution**: `findNotebookForFile(filePath)` determines which notebook owns a file by finding the deepest matching notebook root that isn't blocked by a nested notebook boundary. Used by `ActiveNotebookService`.
 
 ### ActiveNotebookService
@@ -91,7 +91,8 @@ Implements `OnModuleInit` and `OnModuleDestroy`.
 
 - Listens to `vscode.window.onDidChangeActiveTextEditor`
 - When the focused file changes, resolves which notebook owns it via `NotebookDiscoveryService.findNotebookForFile()`
-- Only tracks `.md` files — non-markdown files or unmanaged files result in no active notebook
+- Only tracks `.md` files. Focusing a non-markdown document clears the active note so the Links Panel says "Open a note to see its links" rather than showing stale links; losing focus entirely (command palette, terminal) preserves state
+- Also records which notebook the sidebar is showing (`setViewedNotebook`), so the Search and Rebuild commands target the same notebook as the sidebar's own buttons
 - Updates a status bar item showing the active notebook name (or "No Notebook")
 - Sends `activeNotebook.changed` notification to the webview via the message bus
 
@@ -106,7 +107,7 @@ Creates one `vscode.FileSystemWatcher` per registered notebook with glob `**/*.m
 4. Buffer event in a per-notebook `pending` map (later events for the same path supersede earlier ones)
 5. After 300ms debounce, flush the batch to the stdio server via `notebook.fileEvent`
 
-Also watches each notebook's `.onyvoreignore` file. On change, reloads the ignore patterns and sends `notebook.ignoreChanged` to the server.
+Also watches each notebook's `.onyvoreignore`. On change it refreshes its local copy — so live events stop flowing for newly-ignored paths — and sends `notebook.ignoreChanged` with just the notebook id. The server owns the authoritative filter and re-runs reconciliation to apply the new rules to files already on disk.
 
 ## VS Code Manifest (`package.json`)
 
