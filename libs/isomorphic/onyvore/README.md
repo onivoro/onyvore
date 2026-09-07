@@ -1,40 +1,58 @@
 # lib-isomorphic-onyvore
 
-Shared constants and types imported by all three Onyvore tiers (VS Code extension host, stdio server, browser webview). This library contains zero runtime logic — only type definitions and constant values.
+Shared by all three Onyvore tiers: the extension host, the stdio server, and the browser webview.
 
-## Import Path
+This started as types and constants only. It now also holds a small amount of **pure logic** — the rules that more than one process has to agree on. Nothing here touches the filesystem, the search index, or the `vscode` API.
+
+## Import path
 
 ```typescript
-import { onyvoreCommands, onyvoreRpcMethods, STOP_NOUNS } from '@onivoro/isomorphic-onyvore';
-import type { Edge, NotebookInfo, FileEvent } from '@onivoro/isomorphic-onyvore';
+import { onyvoreRpcMethods, parseSearchQuery, resolveWikilinkTarget } from '@onivoro/isomorphic-onyvore';
+import type { Edge, NotebookSearchHit, LinksForNote } from '@onivoro/isomorphic-onyvore';
 ```
 
-The path mapping `@onivoro/isomorphic-onyvore` is defined in `tsconfig.base.json` and resolves to `libs/isomorphic/onyvore/src/index.ts`.
+The mapping is defined in `tsconfig.base.json` and resolves to `src/index.ts`.
 
-## Contents
+## Why logic lives here
 
-### Constants
+Each of these moved in because two tiers were about to implement the same rule separately and drift apart.
 
-| File | Export | Purpose |
+| Module | Exports | Why it is shared |
 |---|---|---|
-| `onyvore-commands.constant.ts` | `onyvoreCommands` | VS Code command palette command IDs (e.g. `onyvore.initializeNotebook`). These strings must match the `contributes.commands` entries in `apps/vscode/onyvore/package.json` and the `@CommandHandler()` decorator arguments in the extension host. |
-| `onyvore-rpc-methods.constant.ts` | `onyvoreRpcMethods` | JSON-RPC method names for stdio server requests (e.g. `notebook.register`, `notebook.search`) and notifications (e.g. `notebook.indexUpdated`, `notebook.ready`). Used by `@StdioHandler()` decorators in the stdio server, `messageBus.sendRequest()` calls in the extension host, and Redux middleware dispatch in the browser. |
-| `stop-nouns.constant.ts` | `STOP_NOUNS` | A `ReadonlySet<string>` of ~60 ultra-generic and domain-common English nouns filtered out during NLP extraction. These prevent over-linking on words like "time", "note", "file", etc. The list is not user-configurable. Used only by `NlpService` in the stdio server. |
+| `wikilinks/wikilink-parser` | `parseWikilinks`, `resolveWikilinkTarget`, `wikilinkCompletionFor`, `noteBasename` | The server builds link edges from `[[foo]]`; the host powers ctrl-click, completion, hover, and diagnostics from the same syntax. Two resolvers would let the editor open a different note than the graph linked to. |
+| `search/search-text` | `wordPrefixPattern`, `hasWordPrefix`, `hasAnyWordPrefix`, `hasPhrase`, `matchPositions`, `tokenize` | The server locates snippet matches; the webview highlights them. When they disagreed, searching `run` highlighted the middle of "brunch" — a match the engine never made. |
+| `search/parse-search-query` | `parseSearchQuery`, `describeQuery`, `isEmptyQuery`, `isFilterOnlyQuery` | The server executes a query; the webview reads it back to the user as confirmation. |
+| `rename/detect-renames` | `detectRenames` | Pure pairing logic over content hashes, used by both the live file-event path and startup reconciliation. |
 
-### Types
+`parseWikilinks` reports byte offsets alongside each link, which is what lets the editor build ranges. Code spans are blanked with equal-length whitespace rather than removed, so every offset stays valid.
 
-| File | Exports | Used By |
+## Constants
+
+| Export | Purpose |
+|---|---|
+| `onyvoreCommands` | Command palette IDs. Must match `contributes.commands` in the extension manifest and the `@CommandHandler()` arguments. |
+| `onyvoreRpcMethods` | JSON-RPC method names for server requests, server notifications, and webview→host calls. Used by `@StdioHandler`, `@WebviewHandler`, `messageBus.sendRequest()`, and the Redux middleware. |
+| `STOP_NOUNS` | 58 ultra-generic and PKM-common English nouns dropped during NLP extraction, so notes do not all link through words like "time" or "file". Not user-configurable. |
+
+## Types
+
+| File | Exports | Notes |
 |---|---|---|
-| `notebook.types.ts` | `NotebookInfo`, `NotebookFileTree`, `NotebookFile` | Notebook metadata exchanged between server and webview. `NotebookInfo.status` drives progress indicators. |
-| `edge.types.ts` | `Edge` | A single link graph edge (`source → target` with `noun` and `count`). Persisted in `links.json` and used for link panel display. |
-| `metadata.types.ts` | `NoteMetadata`, `NotebookMetadata` | Per-file modification time tracking. `NotebookMetadata.files` is persisted as `metadata.json` and drives startup reconciliation. |
-| `links-panel.types.ts` | `LinkEntry`, `LinksForNote` | Response shape for the `notebook.getLinks` RPC method. Contains outbound and inbound link arrays sorted by occurrence count. |
-| `file-event.types.ts` | `FileEventType`, `FileEvent`, `FileEventBatch` | File watcher event payloads sent from the extension host to the stdio server via `notebook.fileEvent`. |
+| `edge.types` | `Edge`, `EdgeType` | `EdgeType` is `'explicit' \| 'mention' \| 'similar'`. `count` means occurrences for `mention` and `similarity × 100` for `similar` — the same field, deliberately different units per type. |
+| `links-panel.types` | `LinkEntry`, `LinksForNote` | Five buckets: explicit in/out, mention in/out, and `similar`, which is undirected because those edges are symmetric. |
+| `notebook.types` | `NotebookInfo`, `NotebookFile`, `NotebookFileTree`, `NotebookSearchHit`, `NotebookSearchResults`, `NotebookSearchGroup`, `SearchMatchField` | A search hit reports `matchedIn` so the UI can say *why* a note surfaced, and carries a `preview` for hits matched by name rather than body text. |
+| `graph.types` | `GraphNode`, `GraphEdge`, `NotebookGraph` | Node `degree` counts non-`similar` edges only. `truncated` reports how many notes were dropped when a large notebook exceeded the render cap. |
+| `metadata.types` | `NoteMetadata`, `NotebookMetadata` | `hash` is optional: notebooks indexed before rename detection existed simply never pair. |
+| `file-event.types` | `FileEventType`, `FileEvent`, `FileEventBatch` | Watcher payloads sent host → server. |
 
-## Alignment Invariants
+## Alignment invariants
 
-Changing a constant or type here affects all three tiers. When modifying:
+A change here reaches all three tiers.
 
-- **Adding an RPC method**: Add to `onyvoreRpcMethods`, implement the `@StdioHandler` in `apps/stdio/onyvore`, and add the caller in the extension host or browser middleware.
-- **Adding a command**: Add to `onyvoreCommands`, add the `@CommandHandler` in `apps/vscode/onyvore`, and add the `contributes.commands` entry in `apps/vscode/onyvore/package.json`.
-- **Changing a type**: All consumers across the three tiers must be updated.
+- **Adding an RPC method** — add to `onyvoreRpcMethods`, implement the `@StdioHandler` (or `@WebviewHandler`), and add the caller.
+- **Adding a command** — add to `onyvoreCommands`, add the `@CommandHandler`, and add the `contributes.commands` entry in `apps/vscode/onyvore/package.json`.
+- **Changing a persisted type** — `Edge`, `NoteMetadata`, and the search index shape are all written to `.onyvore/`. Bump `ARTIFACT_VERSION` in `PersistenceService` (or `INDEX_FORMAT_VERSION` in `SearchIndexService`) so existing notebooks rebuild instead of loading a shape this build cannot read.
+
+## Tests
+
+`npx nx test lib-isomorphic-onyvore`. Every module here has a spec beside it; the pure functions are the cheapest place in the codebase to test behavior, and both tiers depend on them being right.

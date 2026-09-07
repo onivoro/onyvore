@@ -153,7 +153,7 @@ Creates one `vscode.FileSystemWatcher` per registered notebook with glob `**/*.m
 2. Check if file matches `.onyvoreignore` patterns (discard if so)
 3. Skip `.onyvore/` directory contents
 4. Buffer event in a per-notebook `pending` map (later events for the same path supersede earlier ones)
-5. After 300ms debounce, flush the batch to the stdio server via `notebook.fileEvent`
+5. After the debounce window (`onyvore.fileWatcher.debounceMs`, default 300ms), flush the batch to the stdio server via `notebook.fileEvent`
 
 Also watches each notebook's `.onyvoreignore`. On change it refreshes its local copy — so live events stop flowing for newly-ignored paths — and sends `notebook.ignoreChanged` with just the notebook id. The server owns the authoritative filter and re-runs reconciliation to apply the new rules to files already on disk.
 

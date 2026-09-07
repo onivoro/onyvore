@@ -137,7 +137,7 @@ Writes four derived artifacts to `{notebookRoot}/.onyvore/`:
 
 All writes are atomic (write to `.tmp`, then `rename()`). Triggered after each debounced batch and during initialization checkpoints (every 100 files).
 
-`loadAll` returns false unless all four load at the current version. Because they are written independently, a crash can leave them disagreeing about what is indexed — so the caller rebuilds rather than trusting partial state.
+The JSON artifacts carry `ARTIFACT_VERSION`; `index.bin` carries its own `INDEX_FORMAT_VERSION`, which moved when `relativePath` left the search schema. `loadAll` returns false unless all four load at the current version. Because they are written independently, a crash can leave them disagreeing about what is indexed — so the caller rebuilds rather than trusting partial state.
 
 ### ReconciliationService
 

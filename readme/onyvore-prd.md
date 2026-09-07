@@ -19,7 +19,7 @@
 The VS Code window. A workspace is the top-level directory (or multi-root configuration) open in VS Code. The workspace itself is not a notebook — it merely contains one or more notebooks. Onyvore discovers notebooks by scanning the workspace for `.onyvore/` directories.
 
 ### Notebook
-A directory containing a `.onyvore/` directory. A notebook is the fundamental unit of organization in Onyvore. Each notebook is **fully isolated** — it has its own search index, link graph, metadata, and `.onyvoreignore` file. Notes in one notebook cannot link to or appear in search results from another notebook.
+A directory containing a `.onyvore/` directory. The directory itself is the marker — every file inside it except `notebook.json` is derived and disposable. A notebook is the fundamental unit of organization in Onyvore. Each notebook is **fully isolated** — it has its own search index, link graph, metadata, and `.onyvoreignore` file. Notes in one notebook cannot link to or appear in search results from another notebook.
 
 A notebook owns all `.md` files within its directory, recursively and at unlimited depth, **down to but not into** any nested notebook. A subdirectory containing its own `.onyvore/` acts as a boundary — the parent notebook stops claiming files at that point.
 
@@ -64,7 +64,7 @@ The parent notebook's file watcher, search index, and link graph skip any subdir
 
 ## 3. Core Philosophy
 * **Markdown-First:** All notes are standard `.md` files. No proprietary databases.
-* **Zero Mutation:** Onyvore never modifies user files. All metadata, link graphs, and indexes are derived artifacts stored in `.onyvore/`. Files remain exactly as authored.
+* **Zero Mutation:** Onyvore never modifies user files. All metadata, link graphs, and indexes are derived artifacts stored in `.onyvore/`. Files remain exactly as authored. Where another tool would silently repair something — a wikilink broken by a rename — Onyvore reports it and offers a fix the user applies. See §9.3.
 * **Notebook-Centric:** Each notebook is self-contained. Settings, indexes, and computed artifacts are stored locally within the notebook's `.onyvore/` directory.
 * **Open Directory:** Any `.md` file in a notebook directory (recursively, unlimited depth) is part of that notebook, regardless of how it was created — by the extension, an AI agent, a script, or manual copy. Non-markdown files (images, PDFs, etc.) coexist in the notebook but only `.md` files are indexed, linked, and searched.
 * **Zero-Binary:** No SQLite or native C++ dependencies. Built for universal distributability via Node.js.
@@ -222,7 +222,7 @@ Onyvore extracts noun phrases from note content and matches them against note ti
 
 1. **Parse:** Content is processed through compromise; nouns are lemmatized to singular form so "clusters" and "cluster" are one term.
 2. **Decompose:** Multi-word phrases are kept as-is *and* split into individual words. "onyvore search engine" yields four candidates: the full phrase plus each word. No intermediate sub-spans are generated. Single-word phrases are not decomposed.
-3. **Filter — stop nouns:** All candidates are checked against a built-in list of ~65 ultra-generic and PKM-common nouns ("thing", "note", "file", "version", …). Words from a decomposed phrase are filtered independently: "change management" decomposes to "change management", "change", "management"; "change" is dropped while the full phrase and "management" survive. The list is not user-configurable.
+3. **Filter — stop nouns:** All candidates are checked against a built-in list of 58 ultra-generic and PKM-common nouns ("thing", "note", "file", "version", …). Words from a decomposed phrase are filtered independently: "change management" decomposes to "change management", "change", "management"; "change" is dropped while the full phrase and "management" survive. The list is not user-configurable.
 4. **Filter — minimum length:** Single-character tokens are excluded.
 
 **Matching.** Surviving phrases are matched case-insensitively against note titles. Each note registers two title variants:
@@ -367,18 +367,20 @@ All settings live under `onyvore.*` in VS Code settings. Those that shape the li
 
 ### 5.4 Technology Stack
 * **Runtime:** Node.js (VS Code Extension Host).
-* **Framework:** NestJS via `@onivoro/server-vscode` (three-tier architecture: extension host + stdio server + React webview).
-* **Search Engine:** Orama (Pure JS).
-* **NLP:** compromise (Pure JS noun-phrase extraction).
-* **Webview UI:** React + Redux + native CSS with VS Code theme variables (`--vscode-editor-foreground`, `--vscode-editor-background`) + `@vscode/codicons` icon font.
-* **Build:** Nx monorepo. Webpack (extension host + stdio server), Vite (browser webview).
+* **Framework:** NestJS via `@onivoro/server-vscode` — three tiers: extension host, stdio server, React webview.
+* **Search Engine:** Orama (pure JS). Query parsing, filtering, and ranking are implemented above it.
+* **NLP:** compromise (pure JS noun-phrase extraction and lemmatization).
+* **Webview UI:** React + Redux, native CSS driven entirely by VS Code theme variables, `@vscode/codicons` icon font.
+* **Build:** Nx monorepo. Webpack (extension host + stdio server), Vite (webview + shared library).
+
+**Written rather than imported:** TF-IDF similarity, the force-directed graph layout, and the search query parser. Each is small enough that a dependency would cost more than it saves, and the graph renderer additionally has to run under a webview CSP that blocks external scripts. The zero-binary constraint rules out native modules regardless.
 
 ---
 
 ## 6. User Experience (UX)
 
 ### 6.1 Notebook Discovery
-On workspace activation, Onyvore scans the workspace recursively at unlimited depth for directories containing `.onyvore/`. Each discovered notebook is registered and its file watcher, search index, and link graph are initialized. New notebooks can be created at any time via `Onyvore: Initialize Notebook`.
+On workspace activation, Onyvore scans the workspace recursively at unlimited depth for directories containing `.onyvore/`. Discovery matches the directory rather than any single file inside it: every artifact is derived and `Rebuild` deletes them all, so keying on one would make a rebuilt notebook undiscoverable. Initialization also writes `.onyvore/notebook.json`, the one file there that is not derived. Each discovered notebook is registered and its file watcher, search index, and link graph are initialized. New notebooks can be created at any time via `Onyvore: Initialize Notebook`.
 
 Notebook discovery only runs at two points:
 * **Workspace activation** (automatic).
@@ -399,22 +401,30 @@ The sidebar is organized top-to-bottom:
 
 1. **Toolbar:** "ONYVORE" title + plus (+) button (initialize new notebook) + rebuild button (rebuild viewed notebook's index).
 2. **Notebook Selector:** Dropdown with typeahead filtering. Shown when more than one notebook exists. The selected notebook becomes the "viewed notebook."
-3. **Search Bar:** Always visible (omnipresent). Searches the viewed notebook's full-text index, or all notebooks when the scope toggle is on. Arrow keys move through results, Enter opens the highlighted one, Escape clears. Results appear inline below the search field, each showing the note title, file path (using the shared `TreeItem` component), a match count badge, and **all matching text snippets** with highlighted search terms. Files with zero content matches are filtered out. Pressing Escape clears the search.
+3. **Search Bar:** Always visible (omnipresent). Searches the viewed notebook's full-text index, or all notebooks when the scope toggle is on. Arrow keys move through results, Enter opens the highlighted one, Escape clears. Results appear inline below the search field, each showing the note title, file path, a match count badge, and **all matching text snippets** with highlighted search terms. A note matched by its name rather than its body shows its opening line and says where the match happened. A `?` button reveals the operator reference, and a line below the input reads the parsed query back.
 4. **File Tree:** Collapsible section showing the viewed notebook's files with progress bar during initialization/reconciliation.
 5. **Unlinked Notes:** Collapsible section (collapsed by default) showing orphan notes in the viewed notebook.
-The **Links Panel** is a separate view rather than another section of this list, so it can be collapsed, reordered, or dragged to the secondary sidebar — which is where a backlinks panel belongs while writing. It follows the **active note** (the editor), not the viewed notebook, and renders up to five sections: Links, Backlinks, Mentions, Mentioned By, and Related Notes, omitting any that are empty.
+
+Two further views sit alongside the sidebar, each registered separately so VS Code can collapse, reorder, or move them to the secondary sidebar:
+
+* **Links** — follows the **active note** (the editor), not the viewed notebook. Renders up to five sections: Links, Backlinks, Mentions, Mentioned By, and Related Notes, omitting any that are empty.
+* **Graph** — a read-only force-directed view of the active notebook's link graph (Section 4.5).
 
 All tree-like lists (files, links, unlinked notes, search results) use a shared `TreeItem` component with label, sublabel (responsive — drops below label when sidebar is narrow), icon (`@vscode/codicons`), and optional badge. Sections use a shared `CollapsibleSection` component with inverted-color headers (foreground as background, vice versa).
 
 ### 6.4 Onboarding Flow
-1.  **Initialize:** User clicks the plus (+) button in the sidebar toolbar, selects a directory via the native picker. Alternatively, runs `Onyvore: Initialize Notebook` from the Command Palette. Onyvore creates the `.onyvore/` metadata directory and begins a background scan. The new notebook auto-selects in the dropdown.
-2.  **Search:** The omnipresent search bar provides instant, scoped access to the viewed notebook's contents.
+1.  **Empty state:** A workspace with no notebook shows a welcome view in the sidebar explaining what a notebook is, with a button that runs `Onyvore: Initialize Notebook`. This is every new user's first screen.
+2.  **Initialize:** The user picks a directory. Onyvore creates `.onyvore/` and begins a background scan; the notebook is usable immediately and results fill in progressively. The new notebook auto-selects in the dropdown.
+3.  **Search:** The omnipresent search bar provides instant access to the notebook's contents.
+4.  **Link:** Typing `[[` in any note completes against note titles, and finished links become ctrl-clickable.
 
 ### 6.5 Command Palette Highlights
 * `Onyvore: Initialize Notebook` (Create a new notebook in a directory selected via the directory picker).
 * `Onyvore: Discover Notebooks` (Re-scan the workspace for `.onyvore/` directories and register any newly discovered notebooks).
 * `Onyvore: Search Notebook` (Focus the search bar, scoped to the viewed notebook. Results support arrow-key navigation and Enter to open; Escape clears).
-* `Onyvore: Rebuild Notebook` (Delete all derived artifacts — `index.bin`, `links.json`, `metadata.json` — from `.onyvore/` and trigger a full re-index from scratch. Useful as a recovery mechanism if the index or link graph enters a bad state).
+* `Onyvore: Rebuild Notebook` (Delete every derived artifact from `.onyvore/` — `index.bin`, `links.json`, `metadata.json`, `tfidf.json` — and re-index from scratch. A recovery mechanism if the index or link graph enters a bad state. `notebook.json` is not derived and survives).
+
+Search and Rebuild both target the **viewed** notebook, falling back to the active one, so a palette command and the equivalent sidebar button always act on the same notebook.
 
 ---
 
@@ -452,11 +462,50 @@ Obsidian's linking model assumes a human author creating `[[wikilinks]]` manuall
 ---
 
 ## 8. Distribution Strategy
-* **Universal VSIX:** A single bundle package.
-* **Platform Support:** Functioning immediately on Windows, macOS, and Linux.
+* **Universal VSIX:** A single bundle package — extension host, stdio server, and webview assets.
+* **Platform Support:** Windows, macOS, and Linux, with no per-platform build.
 * **Zero Setup:** No external installation of Bun, SQLite, or CLI tools required.
+* **Release trigger:** `publish-onyvore.yml` publishes to the Marketplace on any change to `apps/vscode/onyvore/package.json` version, building the VSIX from source in CI. Bumping that version is therefore a deliberate release action, never a side effect of a feature commit.
 
 ---
 
-## 9. Future Considerations
-* **Multilingual NLP:** compromise is English-only. Multilingual noun-phrase extraction would require evaluating alternative pure-JS NLP libraries or a pluggable extraction backend.
+## 9. Roadmap
+
+Items are grouped by how settled they are. Anything under **Deferred** was reached and consciously postponed during implementation; anything under **Directions** is a proposal, not a commitment.
+
+### 9.1 Deferred — known gaps
+
+These have been hit, understood, and left undone on purpose.
+
+| Gap | Why it is still open |
+|---|---|
+| **Live verification** | The stdio server is well covered by unit tests, but the VS Code integration surface — editor providers, three webview views, the graph renderer — has only been exercised through builds and a manifest-validating package step. An extension integration test harness is the highest-value testing work left. |
+| **Performance measurement** | The 10k-note target in §4.3 has never been measured. TF-IDF vector caching and the per-note similarity cap were written against reasoning about complexity, not against a benchmark. A generated corpus and timings for cold start, reconciliation, and search would turn those into facts. |
+| **Multilingual NLP** | compromise is English-only, so `mention` edges only work for English notes. Wikilinks and search are unaffected. Would need an alternative pure-JS library or a pluggable extraction backend. |
+| **Stemming** | Deliberately off: `jogging` does not find a note that says `jog`. A search that quietly matches words the user did not write is harder to trust than one that misses a plural, and prefix matching already covers typing. Worth revisiting only with evidence that users expect otherwise. |
+| **Documentation audiences** | `apps/vscode/onyvore/README.md` is developer documentation, and is also what ships as the Marketplace page. The user-facing search syntax was put at the top of it; splitting the two audiences into separate files is the real fix. |
+| **Release** | The extension version has not moved since this work began. `publish-onyvore.yml` publishes on any change to that file, so the bump is a deliberate release decision rather than part of a feature commit. |
+
+### 9.2 Directions — where this could go
+
+Ordered by how much they build on what already exists.
+
+**An agent-facing query surface.** §7 claims agent-friendliness, but that claim is currently passive: an agent can write a markdown file and Onyvore will index it. It cannot *ask* the notebook anything. The stdio server is already a JSON-RPC service that answers search, links, orphans, and graph queries — exposing that same surface to agents (an MCP server, or a CLI over the same handlers) would turn a passive index into something an agent can read from. This is the largest strategic gap between what Onyvore is and what it says it is, and the smallest implementation distance to close one.
+
+**Note creation.** There is no way to create a note from inside Onyvore except as a quick fix on a broken wikilink. No daily note, no quick capture, no "new note here" on a folder. For a tool people are meant to write in, that is a conspicuous hole.
+
+**Tags without mutation.** Onyvore has no tags because tags usually mean frontmatter, and Onyvore does not write to files. But `#hashtags` already appear in prose and could be read as a fourth, entirely derived dimension — searchable via `tag:`, browsable in the sidebar — without touching a single byte the user wrote. This is the shape of feature Onyvore should look for: capability derived from what is already on disk.
+
+**Graph as navigation.** The graph view renders; it does not yet filter. Toggling edge types, focusing on a subtree, or pinning the active note's neighborhood would turn it from a picture into a way of moving around.
+
+**Cross-notebook links.** Notebooks are hermetic by design, and search already crosses them. Whether links should is a genuine product question, not an oversight — the isolation is what makes a notebook portable.
+
+### 9.3 Non-goals
+
+Stated so they stop being re-litigated.
+
+* **Writing to user files.** Not frontmatter, not link rewriting on rename, not tag insertion. Every metadata need is met by a derived artifact in `.onyvore/`. This constraint is what makes Onyvore safe to point at a directory that agents and scripts also write to, and it is the reason broken links are *reported* rather than repaired.
+* **A sync service.** Notes are ordinary files in ordinary directories. Git, Dropbox, and Syncthing already solve this better than an extension could.
+* **A proprietary format or database.** Zero-binary, zero-SQLite, markdown on disk. The `.onyvore/` directory is disposable by construction.
+* **A rich text editor.** VS Code is the editor. Onyvore adds knowledge management around it.
+* **Boolean query algebra.** No `OR`, no parentheses, no regex in search. ripgrep is one keystroke away inside VS Code, and deferring to it is cheaper than competing with it.
