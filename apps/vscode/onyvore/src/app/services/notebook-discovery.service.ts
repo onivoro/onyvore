@@ -35,18 +35,29 @@ export class NotebookDiscoveryService implements OnModuleInit {
 
     for (const folder of workspaceFolders) {
       const rootUri = folder.uri;
-      // Search for .onyvore/metadata.json files (findFiles only matches files, not directories)
-      const metadataUris = await this.vscode.workspace.findFiles(
-        new this.vscode.RelativePattern(rootUri, '**/.onyvore/metadata.json'),
+      // A notebook is any directory containing .onyvore/, so match anything
+      // inside one rather than a single artifact — derived files come and go
+      // (Rebuild deletes them all), but the directory is what defines the
+      // notebook. findFiles matches files only, hence the trailing `/**`.
+      const marked = await this.vscode.workspace.findFiles(
+        new this.vscode.RelativePattern(rootUri, '**/.onyvore/**'),
         '**/node_modules/**',
       );
 
-      for (const metadataUri of metadataUris) {
-        // metadata.json → .onyvore/ → notebook root
-        const notebookRoot = path.dirname(path.dirname(metadataUri.fsPath));
+      const roots = new Set<string>();
+      for (const uri of marked) {
+        const root = this.notebookRootFor(uri.fsPath);
+        if (root) roots.add(root);
+      }
+
+      for (const notebookRoot of roots) {
         const notebookId = notebookRoot; // Use absolute path as ID
 
         if (this.discoveredNotebooks.has(notebookId)) continue;
+
+        // Backfill the marker for notebooks created before it existed, so a
+        // later Rebuild cannot make the notebook undiscoverable.
+        await this.writeMarker(notebookRoot);
 
         const notebook: DiscoveredNotebook = {
           id: notebookId,
@@ -85,9 +96,10 @@ export class NotebookDiscoveryService implements OnModuleInit {
   async initializeNotebook(rootPath: string): Promise<DiscoveredNotebook> {
     const notebookId = rootPath;
 
-    // Create .onyvore/ directory
+    // Create .onyvore/ and its marker file
     const onyvoreUri = this.vscode.Uri.file(path.join(rootPath, '.onyvore'));
     await this.vscode.workspace.fs.createDirectory(onyvoreUri);
+    await this.writeMarker(rootPath);
 
     const notebook: DiscoveredNotebook = {
       id: notebookId,
@@ -113,6 +125,43 @@ export class NotebookDiscoveryService implements OnModuleInit {
     this.fileWatcher.registerNotebook(notebook.id, notebook.rootPath);
 
     return notebook;
+  }
+
+  /**
+   * Resolve the notebook root from any path inside its `.onyvore/` directory.
+   * Returns null when the path is not inside one.
+   */
+  private notebookRootFor(fsPath: string): string | null {
+    const segments = fsPath.split(path.sep);
+    const index = segments.indexOf('.onyvore');
+    if (index <= 0) return null;
+    return segments.slice(0, index).join(path.sep);
+  }
+
+  /**
+   * Write `.onyvore/notebook.json`. This is the one file in `.onyvore/` that is
+   * not derived — it marks the directory as a notebook and survives Rebuild.
+   */
+  private async writeMarker(rootPath: string): Promise<void> {
+    const markerUri = this.vscode.Uri.file(
+      path.join(rootPath, '.onyvore', 'notebook.json'),
+    );
+    try {
+      await this.vscode.workspace.fs.stat(markerUri);
+      return; // Already present.
+    } catch {
+      // Not there yet — write it below.
+    }
+
+    try {
+      await this.vscode.workspace.fs.writeFile(
+        markerUri,
+        Buffer.from(JSON.stringify({ version: 1 }, null, 2)),
+      );
+    } catch {
+      // A read-only notebook still works; discovery just falls back to
+      // whichever derived artifacts happen to be present.
+    }
   }
 
   getNotebook(notebookId: string): DiscoveredNotebook | undefined {

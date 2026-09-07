@@ -2,14 +2,15 @@ import { Injectable, Inject } from '@nestjs/common';
 import { MESSAGE_BUS, MessageBus } from '@onivoro/isomorphic-jsonrpc';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { onyvoreRpcMethods } from '@onivoro/isomorphic-onyvore';
-import { NlpService } from './nlp.service';
-import { SearchIndexService } from './search-index.service';
+import { onyvoreRpcMethods, detectRenames } from '@onivoro/isomorphic-onyvore';
 import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
 import { TfidfService } from './tfidf.service';
-import { WikilinkService } from './wikilink.service';
+import { MentionService } from './mention.service';
+import { IndexingService } from './indexing.service';
+import { IgnoreService } from './ignore.service';
+import { AppStdioOnyvoreConfig } from '../app-stdio-onyvore-config.class';
 
 interface ScannedFile {
   relativePath: string;
@@ -20,16 +21,26 @@ interface ScannedFile {
 export class ReconciliationService {
   constructor(
     @Inject(MESSAGE_BUS) private readonly messageBus: MessageBus,
-    private readonly nlpService: NlpService,
-    private readonly searchIndexService: SearchIndexService,
     private readonly linkGraphService: LinkGraphService,
     private readonly metadataService: MetadataService,
     private readonly persistenceService: PersistenceService,
     private readonly tfidfService: TfidfService,
-    private readonly wikilinkService: WikilinkService,
+    private readonly mentionService: MentionService,
+    private readonly indexingService: IndexingService,
+    private readonly ignoreService: IgnoreService,
+    private readonly config: AppStdioOnyvoreConfig,
   ) {}
 
+  /**
+   * Diff persisted state against the filesystem and apply only what changed.
+   *
+   * Also the path used when `.onyvoreignore` changes: reloading the filter
+   * turns newly-ignored files into deletions and newly-included files into
+   * creations, which is exactly the diff this already computes.
+   */
   async reconcile(notebookId: string): Promise<void> {
+    await this.ignoreService.load(notebookId);
+
     const knownFiles = this.metadataService.getAllFiles(notebookId);
     const currentFiles = await this.scanFilesystem(notebookId);
 
@@ -56,128 +67,151 @@ export class ReconciliationService {
 
     const total = created.length + modified.length + deleted.length;
     if (total === 0) {
-      this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_READY, {
-        notebookId,
-      });
+      this.sendReady(notebookId);
       return;
     }
 
     let processed = 0;
 
-    // Phase 1: Process deletes first (update corpus before computing edges)
-    for (const relPath of deleted) {
-      this.tfidfService.removeDocument(notebookId, relPath);
-      this.linkGraphService.removeAllEdgesForFile(notebookId, relPath);
-      this.linkGraphService.unregisterFile(notebookId, relPath);
-      this.metadataService.removeFile(notebookId, relPath);
-      this.searchIndexService.removeDocument(notebookId, relPath).catch(() => {});
-      processed++;
-      this.sendProgress(notebookId, processed, total);
-    }
-
-    // Phase 2: Extract terms for all creates/changes (update corpus before edge computation)
+    // Read everything that changed up front: contents are needed to derive
+    // edges, and their hashes are what identify a note renamed while the
+    // extension was not running.
     const changedPaths = [...created, ...modified];
     const contentCache = new Map<string, string>();
+    const hashes = new Map<string, string>();
+    const mtimes = new Map<string, number>();
+
     for (const relPath of changedPaths) {
       const content = await this.readFile(notebookId, relPath);
       contentCache.set(relPath, content);
-      const stat = await this.statFile(notebookId, relPath);
-      const title = this.searchTitleFromPath(relPath);
-      const isCreate = created.includes(relPath);
-
-      if (isCreate) {
-        await this.searchIndexService.addDocument(notebookId, relPath, title, content);
-      } else {
-        await this.searchIndexService.updateDocument(notebookId, relPath, title, content);
-      }
-
-      const terms = this.nlpService.extractTerms(content);
-      this.tfidfService.setDocument(notebookId, relPath, terms);
-      this.linkGraphService.registerFile(notebookId, relPath);
-      this.metadataService.setFile(notebookId, relPath, stat.mtimeMs);
+      hashes.set(relPath, this.indexingService.hash(content));
+      mtimes.set(relPath, (await this.statFile(notebookId, relPath)).mtimeMs);
     }
 
-    // Phase 3: Compute implicit + explicit edges for each changed file
-    for (const relPath of changedPaths) {
-      const implicitEdges = this.tfidfService.computeEdgesForDocument(notebookId, relPath);
-      this.linkGraphService.replaceImplicitEdgesForFile(notebookId, relPath, implicitEdges);
+    const renames = detectRenames(
+      deleted.map((relPath) => ({
+        relativePath: relPath,
+        hash: knownFiles[relPath]?.hash,
+      })),
+      created.map((relPath) => ({
+        relativePath: relPath,
+        hash: hashes.get(relPath),
+      })),
+    );
 
-      const content = contentCache.get(relPath)!;
-      const explicitEdges = this.wikilinkService.extractAndResolve(notebookId, relPath, content);
-      this.linkGraphService.replaceExplicitEdgesForFile(notebookId, relPath, explicitEdges);
+    const renamedFrom = new Set(renames.map((r) => r.from));
+    const renamedTo = new Set(renames.map((r) => r.to));
 
+    for (const { from, to } of renames) {
+      await this.indexingService.renameDocument(
+        notebookId,
+        from,
+        to,
+        contentCache.get(to)!,
+        mtimes.get(to)!,
+        hashes.get(to),
+      );
       processed++;
       this.sendProgress(notebookId, processed, total);
     }
 
+    // Remaining deletes, so the corpus is correct before any edge is computed.
+    for (const relPath of deleted) {
+      if (renamedFrom.has(relPath)) continue;
+      await this.indexingService.removeDocument(notebookId, relPath);
+      processed++;
+      this.sendProgress(notebookId, processed, total);
+    }
+
+    // Register every remaining document before deriving links from any of them.
+    for (const relPath of changedPaths) {
+      if (renamedTo.has(relPath)) continue;
+      await this.indexingService.registerDocument(
+        notebookId,
+        relPath,
+        contentCache.get(relPath)!,
+        mtimes.get(relPath)!,
+        hashes.get(relPath),
+      );
+    }
+
+    // A renamed note needs inbound links rebuilt as well: its title changed.
+    const refreshInbound = new Set([...created, ...renamedTo]);
+
+    for (const relPath of changedPaths) {
+      this.indexingService.computeEdges(
+        notebookId,
+        relPath,
+        contentCache.get(relPath)!,
+        { refreshInbound: refreshInbound.has(relPath) },
+      );
+      if (!renamedTo.has(relPath)) {
+        processed++;
+        this.sendProgress(notebookId, processed, total);
+      }
+    }
+
     await this.persistenceService.persistAll(notebookId);
-    this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_READY, {
-      notebookId,
-    });
+    this.sendReady(notebookId);
   }
 
+  /** Build a notebook from scratch. */
   async initialize(notebookId: string): Promise<void> {
+    await this.ignoreService.load(notebookId);
+
     const files = await this.scanFilesystem(notebookId);
     const total = files.length;
     let processed = 0;
 
-    // Phase 1: Extract terms for all files and register in TF-IDF corpus
     const contentCache = new Map<string, string>();
+
     for (const file of files) {
       const content = await this.readFile(notebookId, file.relativePath);
       contentCache.set(file.relativePath, content);
-      const title = this.searchTitleFromPath(file.relativePath);
-
-      await this.searchIndexService.addDocument(
+      await this.indexingService.registerDocument(
         notebookId,
         file.relativePath,
-        title,
         content,
+        file.mtimeMs,
       );
-
-      const terms = this.nlpService.extractTerms(content);
-      this.tfidfService.setDocument(notebookId, file.relativePath, terms);
-      this.linkGraphService.registerFile(notebookId, file.relativePath);
-      this.metadataService.setFile(notebookId, file.relativePath, file.mtimeMs);
 
       processed++;
       if (processed % 10 === 0 || processed === total) {
         this.sendInitProgress(notebookId, processed, total);
       }
 
-      // Checkpoint every 100 files (search index + metadata, not links yet)
-      if (processed % 100 === 0) {
+      if (processed % this.config.checkpointInterval === 0) {
         await this.persistenceService.persistIndex(notebookId);
         await this.persistenceService.persistMetadata(notebookId);
         await this.persistenceService.persistTfidf(notebookId);
       }
     }
 
-    // Phase 2: Compute all implicit edges at once (IDF needs full corpus)
-    const implicitEdges = this.tfidfService.computeAllEdges(notebookId);
-    this.linkGraphService.replaceAllImplicitEdges(notebookId, implicitEdges);
+    // Whole-corpus passes: IDF needs every document, mention matching needs
+    // every title. Both are cheaper in one sweep than file by file.
+    this.linkGraphService.replaceAllEdgesOfType(
+      notebookId,
+      'similar',
+      this.tfidfService.computeAllEdges(notebookId),
+    );
+    this.linkGraphService.replaceAllEdgesOfType(
+      notebookId,
+      'mention',
+      this.mentionService.computeAllEdges(notebookId),
+    );
 
-    // Phase 3: Extract explicit wikilink edges (metadata is fully registered now)
+    // Wikilinks resolve per file, against the now-complete file list.
     for (const file of files) {
-      const content = contentCache.get(file.relativePath)!;
-      const explicitEdges = this.wikilinkService.extractAndResolve(
+      this.indexingService.computeEdges(
         notebookId,
         file.relativePath,
-        content,
+        contentCache.get(file.relativePath)!,
+        { refreshInbound: false },
       );
-      if (explicitEdges.length > 0) {
-        this.linkGraphService.replaceExplicitEdgesForFile(
-          notebookId,
-          file.relativePath,
-          explicitEdges,
-        );
-      }
     }
 
     await this.persistenceService.persistAll(notebookId);
-    this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_READY, {
-      notebookId,
-    });
+    this.sendReady(notebookId);
   }
 
   private async scanFilesystem(notebookId: string): Promise<ScannedFile[]> {
@@ -200,72 +234,66 @@ export class ReconciliationService {
 
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
+      const relativePath = path.relative(notebookId, fullPath);
 
       if (entry.isDirectory()) {
-        // Skip .onyvore directory
         if (entry.name === '.onyvore') continue;
 
-        // Skip nested notebooks (directories containing their own .onyvore/)
+        // A subdirectory with its own .onyvore/ is a separate notebook and
+        // manages its own index — same boundary rule as nested .git/.
         try {
           await fs.access(path.join(fullPath, '.onyvore'));
-          continue; // Nested notebook boundary
+          continue;
         } catch {
-          // Not a nested notebook, recurse
+          // Not a nested notebook, recurse.
         }
+
+        if (this.ignoreService.ignores(notebookId, `${relativePath}/`)) continue;
 
         await this.walkDirectory(notebookId, fullPath, results);
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        if (this.ignoreService.ignores(notebookId, relativePath)) continue;
         const stat = await fs.stat(fullPath);
-        const relativePath = path.relative(notebookId, fullPath);
         results.push({ relativePath, mtimeMs: stat.mtimeMs });
       }
     }
   }
 
   private async readFile(notebookId: string, relativePath: string): Promise<string> {
-    const fullPath = path.join(notebookId, relativePath);
-    return fs.readFile(fullPath, 'utf-8');
+    return fs.readFile(path.join(notebookId, relativePath), 'utf-8');
   }
 
   private async statFile(
     notebookId: string,
     relativePath: string,
   ): Promise<{ mtimeMs: number }> {
-    const fullPath = path.join(notebookId, relativePath);
-    const stat = await fs.stat(fullPath);
+    const stat = await fs.stat(path.join(notebookId, relativePath));
     return { mtimeMs: stat.mtimeMs };
   }
 
-  private sendProgress(
-    notebookId: string,
-    processed: number,
-    total: number,
-  ): void {
-    const progress = total > 0 ? Math.round((processed / total) * 100) : 100;
+  private sendReady(notebookId: string): void {
+    this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_READY, {
+      notebookId,
+    });
+  }
+
+  private sendProgress(notebookId: string, processed: number, total: number): void {
     this.messageBus.sendNotification(
       onyvoreRpcMethods.NOTEBOOK_RECONCILE_PROGRESS,
-      { notebookId, processed, total, progress },
+      { notebookId, processed, total, progress: this.percent(processed, total) },
     );
   }
 
-  private searchTitleFromPath(relativePath: string): string {
-    const basename = path.basename(relativePath, '.md');
-    const dir = path.dirname(relativePath);
-    if (dir && dir !== '.') {
-      return `${path.basename(dir)} ${basename}`;
-    }
-    return basename;
+  private sendInitProgress(notebookId: string, processed: number, total: number): void {
+    this.messageBus.sendNotification(onyvoreRpcMethods.NOTEBOOK_INIT_PROGRESS, {
+      notebookId,
+      processed,
+      total,
+      progress: this.percent(processed, total),
+    });
   }
 
-  private sendInitProgress(
-    notebookId: string,
-    processed: number,
-    total: number,
-  ): void {
-    const progress = total > 0 ? Math.round((processed / total) * 100) : 100;
-    this.messageBus.sendNotification(
-      onyvoreRpcMethods.NOTEBOOK_INIT_PROGRESS,
-      { notebookId, processed, total, progress },
-    );
+  private percent(processed: number, total: number): number {
+    return total > 0 ? Math.round((processed / total) * 100) : 100;
   }
 }

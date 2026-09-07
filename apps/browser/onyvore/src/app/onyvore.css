@@ -269,6 +269,12 @@ body {
   overflow: hidden;
 }
 
+.ony-tree__item--selected,
+.ony-tree__item--selected:hover {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
 .ony-tree__item:hover {
   background: color-mix(in srgb, var(--vscode-editor-foreground) 10%, transparent);
 }
@@ -772,4 +778,156 @@ body {
   color: var(--vscode-editor-foreground);
   opacity: 0.5;
   text-align: center;
+}
+
+/* The Links view has the whole panel to itself, so it scrolls rather than
+   sharing a fixed slice of the sidebar with the tree. */
+.ony-app__links--standalone {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: none;
+}
+
+/* ---- graph view ---- */
+.ony-graph {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.ony-graph__canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.ony-graph__legend {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  pointer-events: none;
+}
+
+.ony-graph__key::before {
+  content: '';
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+  background: currentColor;
+}
+
+.ony-graph__key--explicit { color: var(--vscode-charts-blue, #4589d6); }
+.ony-graph__key--mention  { color: var(--vscode-charts-green, #57a64a); }
+.ony-graph__key--similar  { color: var(--vscode-panel-border, #808080); }
+
+.ony-graph__truncated { font-style: italic; }
+
+/* ---- search scope toggle and cross-notebook grouping ---- */
+.ony-searchbar__scope {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  line-height: 1.6;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 2px;
+}
+
+.ony-searchbar__scope:hover {
+  color: var(--vscode-foreground);
+}
+
+.ony-searchbar__scope--on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+
+.ony-searchbar__scope:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+
+.ony-searchbar__group-header {
+  padding: 4px 8px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-descriptionForeground);
+  position: sticky;
+  top: 0;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+/* ---- search syntax help, parsed query, and match labels ---- */
+.ony-searchhelp {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+}
+
+.ony-searchhelp__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+
+.ony-searchhelp__syntax {
+  flex: 0 0 8.5em;
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ony-searchhelp__meaning { margin: 0; }
+
+.ony-searchbar__parsed {
+  padding: 2px 8px 4px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ony-searchbar__notice {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-descriptionForeground));
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.ony-searchbar__match-label {
+  padding: 0 8px 2px 24px;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.ony-searchbar__snippet--preview {
+  font-style: italic;
+  opacity: 0.85;
 }

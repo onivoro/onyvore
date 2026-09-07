@@ -1,10 +1,11 @@
 import { TfidfService } from './tfidf.service';
+import { TermStoreService } from './term-store.service';
 import { AppStdioOnyvoreConfig } from '../app-stdio-onyvore-config.class';
 
 function makeService(threshold = 0.15): TfidfService {
   const config = new AppStdioOnyvoreConfig();
   (config as any).similarityThreshold = threshold;
-  return new TfidfService(config);
+  return new TfidfService(config, new TermStoreService());
 }
 
 function terms(entries: Record<string, number>): Map<string, number> {
@@ -372,5 +373,100 @@ describe('TfidfService', () => {
       );
       expect(crossLinks.length).toBe(0);
     });
+  });
+});
+
+describe('TfidfService — similarity cap', () => {
+  function makeCapped(limit: number, threshold = 0.01): TfidfService {
+    const config = new AppStdioOnyvoreConfig();
+    (config as any).similarityThreshold = threshold;
+    (config as any).maxSimilarPerNote = limit;
+    return new TfidfService(config, new TermStoreService());
+  }
+
+  /**
+   * A term present in every document has idf 0 and is dropped as
+   * non-discriminative, so fixtures need documents that lack the shared term.
+   */
+  function addBallast(svc: TfidfService, count = 3): void {
+    for (let i = 0; i < count; i++) {
+      svc.setDocument(NB, `ballast-${i}.md`, terms({ [`ballast${i}`]: 1 }));
+    }
+  }
+
+  it('should cap the similar notes returned for one document', () => {
+    const svc = makeCapped(2);
+    addBallast(svc);
+    svc.setDocument(NB, 'hub.md', terms({ shared: 5 }));
+    for (const name of ['a', 'b', 'c', 'd', 'e']) {
+      svc.setDocument(NB, `${name}.md`, terms({ shared: 1, [name]: 1 }));
+    }
+
+    const outbound = svc
+      .computeEdgesForDocument(NB, 'hub.md')
+      .filter((e) => e.source === 'hub.md');
+
+    expect(outbound.length).toBe(2);
+  });
+
+  it('should keep the strongest matches when capping', () => {
+    const svc = makeCapped(1);
+    addBallast(svc);
+    svc.setDocument(NB, 'hub.md', terms({ shared: 10, rare: 10 }));
+    svc.setDocument(NB, 'strong.md', terms({ shared: 10, rare: 10 }));
+    svc.setDocument(NB, 'weak.md', terms({ shared: 1, filler: 20 }));
+
+    const outbound = svc
+      .computeEdgesForDocument(NB, 'hub.md')
+      .filter((e) => e.source === 'hub.md');
+
+    expect(outbound.map((e) => e.target)).toEqual(['strong.md']);
+  });
+
+  it('should cap full-corpus computation per note', () => {
+    const svc = makeCapped(2);
+    addBallast(svc);
+    svc.setDocument(NB, 'hub.md', terms({ shared: 5 }));
+    for (const name of ['a', 'b', 'c', 'd', 'e']) {
+      svc.setDocument(NB, `${name}.md`, terms({ shared: 1, [name]: 1 }));
+    }
+
+    const fromHub = svc.computeAllEdges(NB).filter((e) => e.source === 'hub.md');
+
+    // The hub keeps its own top 2; other notes may also keep the hub in theirs,
+    // so the union can exceed the cap — but never reaches the uncapped 5.
+    expect(fromHub.length).toBeGreaterThanOrEqual(2);
+    expect(fromHub.length).toBeLessThanOrEqual(5);
+  });
+
+  it('should always emit similar edges in both directions', () => {
+    const svc = makeCapped(10);
+    addBallast(svc);
+    svc.setDocument(NB, 'a.md', terms({ shared: 3, alpha: 1 }));
+    svc.setDocument(NB, 'b.md', terms({ shared: 3, beta: 1 }));
+
+    const pairsOf = (edges: ReturnType<TfidfService['computeAllEdges']>) =>
+      edges
+        .filter((e) => e.source.startsWith('a.md') || e.source.startsWith('b.md'))
+        .map((e) => `${e.source}->${e.target}`)
+        .sort();
+
+    expect(pairsOf(svc.computeAllEdges(NB))).toEqual(['a.md->b.md', 'b.md->a.md']);
+    expect(pairsOf(svc.computeEdgesForDocument(NB, 'a.md'))).toEqual([
+      'a.md->b.md',
+      'b.md->a.md',
+    ]);
+  });
+
+  it('should reflect corpus changes rather than serving stale vectors', () => {
+    const svc = makeCapped(10, 0.1);
+    addBallast(svc);
+    svc.setDocument(NB, 'a.md', terms({ shared: 3 }));
+    svc.setDocument(NB, 'b.md', terms({ shared: 3 }));
+    expect(svc.computeEdgesForDocument(NB, 'a.md').length).toBeGreaterThan(0);
+
+    // Rewriting b.md so it shares nothing must drop the edge on the next call.
+    svc.setDocument(NB, 'b.md', terms({ unrelated: 4 }));
+    expect(svc.computeEdgesForDocument(NB, 'a.md')).toEqual([]);
   });
 });

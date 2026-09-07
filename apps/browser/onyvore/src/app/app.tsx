@@ -5,9 +5,18 @@ import { onyvoreRpcMethods } from '@onivoro/isomorphic-onyvore';
 import type { RootState } from './state/types/root-state.type';
 import { NotebookSidebar } from './components/NotebookSidebar';
 import { LinksPanel } from './components/LinksPanel';
+import { GraphPanel } from './components/GraphPanel';
 import { SearchBar } from './components/SearchBar';
 import { NotebookSelector } from './components/NotebookSelector';
 import { PlusIcon, RebuildIcon } from './components/Icons';
+
+/**
+ * Every view renders the same bundle; the extension host injects this flag to
+ * say which one this is.
+ */
+const view = (window as any).__ONYVORE_VIEW__ as 'links' | 'graph' | undefined;
+const isLinksView = view === 'links';
+const isGraphView = view === 'graph';
 
 export default function App() {
   const { sendRequest } = useRpc();
@@ -28,6 +37,18 @@ export default function App() {
   // Default to active notebook, or the only notebook if there's just one
   const currentNotebookId =
     viewingId ?? activeNotebookId ?? (notebooks.length === 1 ? notebooks[0].id : null);
+
+  // Tell the extension host which notebook is on screen, so palette commands
+  // (Search, Rebuild) act on the same notebook as the sidebar's own buttons.
+  // Only the sidebar owns this — the Links view has no notebook selector and
+  // would otherwise fight it for the same piece of host state.
+  useEffect(() => {
+    if (isLinksView || isGraphView) return;
+    sendRequest({
+      method: onyvoreRpcMethods.SET_VIEWED_NOTEBOOK,
+      params: { notebookId: currentNotebookId },
+    });
+  }, [currentNotebookId]);
 
   // When pick directory returns, initialize the notebook
   useEffect(() => {
@@ -74,6 +95,27 @@ export default function App() {
       params: { notebookId: currentNotebookId },
     });
   };
+
+  // The Graph view follows the editor and fills its panel.
+  if (isGraphView) {
+    return (
+      <div className="ony-app">
+        <GraphPanel />
+      </div>
+    );
+  }
+
+  // The Links view follows the editor, not the sidebar selection, so it needs
+  // none of the toolbar, selector, search, or tree.
+  if (isLinksView) {
+    return (
+      <div className="ony-app">
+        <div className="ony-app__links ony-app__links--standalone">
+          <LinksPanel />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ony-app">

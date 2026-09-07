@@ -18,9 +18,14 @@ export class MetadataService {
     this.metadata.delete(notebookId);
   }
 
-  setFile(notebookId: string, relativePath: string, mtimeMs: number): void {
+  setFile(
+    notebookId: string,
+    relativePath: string,
+    mtimeMs: number,
+    hash?: string,
+  ): void {
     const meta = this.getOrCreate(notebookId);
-    meta.files[relativePath] = { relativePath, mtimeMs };
+    meta.files[relativePath] = { relativePath, mtimeMs, hash };
   }
 
   removeFile(notebookId: string, relativePath: string): void {

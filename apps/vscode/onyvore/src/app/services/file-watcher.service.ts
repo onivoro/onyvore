@@ -6,8 +6,7 @@ import { NotebookDiscoveryService } from './notebook-discovery.service';
 import * as path from 'path';
 import * as fs from 'fs';
 import ignore from 'ignore';
-
-const DEBOUNCE_MS = 300;
+import { OnyvoreSettingsService } from './onyvore-settings.service';
 
 interface WatcherState {
   watcher: any; // vscode.FileSystemWatcher
@@ -26,6 +25,7 @@ export class FileWatcherService implements OnModuleDestroy {
     @Inject(MESSAGE_BUS) private readonly messageBus: MessageBus,
     @Inject(forwardRef(() => NotebookDiscoveryService))
     private readonly notebookDiscovery: NotebookDiscoveryService,
+    private readonly settings: OnyvoreSettingsService,
   ) {}
 
   onModuleDestroy(): void {
@@ -116,7 +116,7 @@ export class FileWatcherService implements OnModuleDestroy {
         notebookId,
         events: batch,
       });
-    }, DEBOUNCE_MS);
+    }, this.settings.debounceMs);
   }
 
   private isInsideNestedNotebook(
@@ -145,6 +145,12 @@ export class FileWatcherService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * `.onyvoreignore` changed. The local filter is refreshed so live events stop
+   * flowing for newly-ignored paths, and the server re-evaluates the notebook —
+   * it owns the authoritative filter and can diff the full file list, which the
+   * watcher cannot.
+   */
   private async onIgnoreChanged(
     notebookId: string,
     rootPath: string,
@@ -152,15 +158,8 @@ export class FileWatcherService implements OnModuleDestroy {
   ): Promise<void> {
     this.loadIgnoreFile(rootPath, state);
 
-    // Determine which files changed status by comparing old and new filters
-    // For simplicity, send ignoreChanged to the server which does a full re-evaluation
-    await this.messageBus.sendRequest(
-      onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED,
-      {
-        notebookId,
-        ignoredPaths: [],
-        includedPaths: [],
-      },
-    );
+    await this.messageBus.sendRequest(onyvoreRpcMethods.NOTEBOOK_IGNORE_CHANGED, {
+      notebookId,
+    });
   }
 }

@@ -3,8 +3,7 @@ import { useSelector } from 'react-redux';
 import { useRpc, useRpcResponse } from '../hooks/use-rpc-request.hook';
 import { onyvoreRpcMethods, type LinksForNote } from '@onivoro/isomorphic-onyvore';
 import type { RootState } from '../state/types/root-state.type';
-import { OutboundLinks } from './OutboundLinks';
-import { InboundLinks } from './InboundLinks';
+import { LinkList } from './LinkList';
 import { CollapsibleSection } from './CollapsibleSection';
 
 export function LinksPanel() {
@@ -43,50 +42,85 @@ export function LinksPanel() {
   }, [response]);
 
   if (!notebookId || !activeNotePath) {
-    return (
-      <div className="ony-empty__hint">Open a note to see its links.</div>
-    );
+    return <div className="ony-empty__hint">Open a note to see its links.</div>;
   }
 
   if (!links) {
-    return (
-      <div className="ony-empty__hint">Loading links...</div>
-    );
+    return <div className="ony-empty__hint">Loading links...</div>;
   }
 
-  const hasExplicit = links.explicitOutbound.length > 0 || links.explicitInbound.length > 0;
-  const hasImplicit = links.implicitOutbound.length > 0 || links.implicitInbound.length > 0;
+  const hasWikilinks =
+    links.explicitOutbound.length > 0 || links.explicitInbound.length > 0;
+  const hasMentions =
+    links.mentionOutbound.length > 0 || links.mentionInbound.length > 0;
+  const hasSimilar = links.similar.length > 0;
 
-  if (!hasExplicit && !hasImplicit) {
-    return (
-      <div className="ony-empty__hint">No links found for this note.</div>
-    );
+  if (!hasWikilinks && !hasMentions && !hasSimilar) {
+    return <div className="ony-empty__hint">No links found for this note.</div>;
   }
 
   return (
     <>
-      {hasExplicit && (
+      {hasWikilinks && (
         <>
-          <CollapsibleSection title="Outbound Links" count={links.explicitOutbound.length}>
-            <OutboundLinks links={links.explicitOutbound} notebookId={notebookId} emptyMessage="No outbound links" />
+          <CollapsibleSection title="Links" count={links.explicitOutbound.length}>
+            <LinkList
+              links={links.explicitOutbound}
+              notebookId={notebookId}
+              emptyMessage="No links from this note"
+            />
           </CollapsibleSection>
 
           <CollapsibleSection title="Backlinks" count={links.explicitInbound.length}>
-            <InboundLinks links={links.explicitInbound} notebookId={notebookId} emptyMessage="No backlinks" />
+            <LinkList
+              links={links.explicitInbound}
+              notebookId={notebookId}
+              emptyMessage="No links to this note"
+            />
           </CollapsibleSection>
         </>
       )}
 
-      {hasImplicit && (
+      {hasMentions && (
         <>
-          <CollapsibleSection title="Related Notes" count={links.implicitOutbound.length} defaultOpen={!hasExplicit}>
-            <OutboundLinks links={links.implicitOutbound} notebookId={notebookId} emptyMessage="No related notes" />
+          <CollapsibleSection
+            title="Mentions"
+            count={links.mentionOutbound.length}
+            defaultOpen={!hasWikilinks}
+          >
+            <LinkList
+              links={links.mentionOutbound}
+              notebookId={notebookId}
+              emptyMessage="This note mentions no others"
+            />
           </CollapsibleSection>
 
-          <CollapsibleSection title="Related Backlinks" count={links.implicitInbound.length} defaultOpen={false}>
-            <InboundLinks links={links.implicitInbound} notebookId={notebookId} emptyMessage="No related backlinks" />
+          <CollapsibleSection
+            title="Mentioned By"
+            count={links.mentionInbound.length}
+            defaultOpen={!hasWikilinks}
+          >
+            <LinkList
+              links={links.mentionInbound}
+              notebookId={notebookId}
+              emptyMessage="No notes mention this one"
+            />
           </CollapsibleSection>
         </>
+      )}
+
+      {hasSimilar && (
+        <CollapsibleSection
+          title="Related Notes"
+          count={links.similar.length}
+          defaultOpen={!hasWikilinks && !hasMentions}
+        >
+          <LinkList
+            links={links.similar}
+            notebookId={notebookId}
+            emptyMessage="No related notes"
+          />
+        </CollapsibleSection>
       )}
     </>
   );

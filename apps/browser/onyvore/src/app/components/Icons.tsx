@@ -8,3 +8,5 @@ export const ChevronIcon = () => <i className="codicon codicon-chevron-right" />
 export const PlusIcon = () => <i className="codicon codicon-plus" />;
 export const ChevronDownIcon = () => <i className="codicon codicon-chevron-down" />;
 export const LinkIcon = () => <i className="codicon codicon-link" />;
+export const QuoteIcon = () => <i className="codicon codicon-quote" />;
+export const RelatedIcon = () => <i className="codicon codicon-references" />;

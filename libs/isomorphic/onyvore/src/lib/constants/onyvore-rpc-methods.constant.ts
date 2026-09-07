@@ -5,12 +5,15 @@ export const onyvoreRpcMethods = {
   NOTEBOOK_FILE_EVENT: 'notebook.fileEvent',
   NOTEBOOK_IGNORE_CHANGED: 'notebook.ignoreChanged',
   NOTEBOOK_SEARCH: 'notebook.search',
+  NOTEBOOK_SEARCH_ALL: 'notebook.searchAll',
+  NOTEBOOK_GET_GRAPH: 'notebook.getGraph',
   NOTEBOOK_GET_LINKS: 'notebook.getLinks',
   NOTEBOOK_GET_NOTEBOOKS: 'notebook.getNotebooks',
   NOTEBOOK_GET_ORPHANS: 'notebook.getOrphans',
   NOTEBOOK_REBUILD: 'notebook.rebuild',
   NOTEBOOK_RECONCILE: 'notebook.reconcile',
   NOTEBOOK_INITIALIZE: 'notebook.initialize',
+  SERVER_CONFIGURE: 'server.configure',
   // Notifications
   NOTEBOOK_INIT_PROGRESS: 'notebook.initProgress',
   NOTEBOOK_RECONCILE_PROGRESS: 'notebook.reconcileProgress',
@@ -22,6 +25,7 @@ export const onyvoreRpcMethods = {
   OPEN_FILE: 'openFile',
   PICK_DIRECTORY: 'pickDirectory',
   GET_ACTIVE_NOTEBOOK: 'getActiveNotebook',
+  SET_VIEWED_NOTEBOOK: 'setViewedNotebook',
   GET_CONFIGURATION: 'getConfiguration',
   GET_WORKSPACE_FOLDERS: 'getWorkspaceFolders',
 } as const;

@@ -2,7 +2,43 @@ export { onyvoreCommands } from './lib/constants/onyvore-commands.constant';
 export { onyvoreRpcMethods } from './lib/constants/onyvore-rpc-methods.constant';
 export { STOP_NOUNS } from './lib/constants/stop-nouns.constant';
 
-export type { NotebookInfo, NotebookFileTree, NotebookFile } from './lib/types/notebook.types';
+export {
+  parseWikilinks,
+  resolveWikilinkTarget,
+  wikilinkCompletionFor,
+  noteBasename,
+} from './lib/wikilinks/wikilink-parser';
+export type { ParsedWikilink } from './lib/wikilinks/wikilink-parser';
+
+export {
+  parseSearchQuery,
+  isEmptyQuery,
+  isFilterOnlyQuery,
+  describeQuery,
+} from './lib/search/parse-search-query';
+export type { ParsedQuery } from './lib/search/parse-search-query';
+export {
+  tokenize,
+  wordPrefixPattern,
+  hasWordPrefix,
+  hasAnyWordPrefix,
+  hasPhrase,
+  matchPositions,
+} from './lib/search/search-text';
+
+export { detectRenames } from './lib/rename/detect-renames';
+export type { HashedPath, RenamePair } from './lib/rename/detect-renames';
+
+export type {
+  NotebookInfo,
+  NotebookFileTree,
+  NotebookFile,
+  NotebookSearchHit,
+  NotebookSearchResults,
+  NotebookSearchGroup,
+  SearchMatchField,
+} from './lib/types/notebook.types';
+export type { GraphNode, GraphEdge, NotebookGraph } from './lib/types/graph.types';
 export type { Edge, EdgeType } from './lib/types/edge.types';
 export type { NoteMetadata, NotebookMetadata } from './lib/types/metadata.types';
 export type { LinkEntry, LinksForNote } from './lib/types/links-panel.types';

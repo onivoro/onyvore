@@ -33,180 +33,173 @@ app-browser-onyvore
 
 ### 1.2 Directory Layouts
 
-**Extension Host** (`apps/vscode/onyvore/`)
+**Extension Host** (`apps/vscode/onyvore/`) — orchestration and everything that touches the `vscode` API.
 ```
-├── project.json
-├── package.json                          # VS Code extension manifest
-├── .vscodeignore
-├── resources/
-│   └── icon.svg                          # Activity bar icon (must exist at extension root for dev mode)
-├── webpack.config.js
-├── tsconfig.json                         # extends tsconfig.server.json
-├── tsconfig.app.json                     # types: ["node", "vscode"]
-├── tsconfig.spec.json
+├── package.json                            # VS Code manifest: commands, views, settings
+├── resources/icon.svg                      # Activity bar icon (must exist at extension root)
 └── src/
-    ├── main.ts                           # createExtensionFromModule()
-    ├── assets/
-    │   └── icon.svg
+    ├── main.ts                             # createExtensionFromModule()
     └── app/
-        ├── onyvore-extension.module.ts   # @VscodeExtensionModule + @Module
+        ├── onyvore-extension.module.ts     # @VscodeExtensionModule + @Module
         ├── classes/
-        │   └── onyvore-webview-provider.class.ts
+        │   ├── onyvore-webview-provider.class.ts
+        │   └── onyvore-secondary-webview-provider.class.ts   # Links and Graph views
         └── services/
             ├── onyvore-command-handler.service.ts
             ├── onyvore-webview-handler.service.ts
             ├── onyvore-server-notification-handler.service.ts
+            ├── onyvore-settings.service.ts                   # onyvore.* settings
             ├── notebook-discovery.service.ts
+            ├── notebook-files.service.ts                     # cached file lists
             ├── active-notebook.service.ts
-            └── file-watcher.service.ts
+            ├── file-watcher.service.ts
+            ├── secondary-views.service.ts                    # registers extra webviews
+            ├── wikilink-features.service.ts                  # completion, links, hover
+            └── wikilink-diagnostics.service.ts               # unresolved links + fixes
 ```
 
-**Stdio Server** (`apps/stdio/onyvore/`)
+**Stdio Server** (`apps/stdio/onyvore/`) — all indexing, linking, and search. Every service here has a `.spec.ts` beside it unless noted.
 ```
-├── project.json
-├── webpack.config.js
-├── tsconfig.json                         # extends tsconfig.server.json
-├── tsconfig.app.json
-├── tsconfig.spec.json
 └── src/
-    ├── main.ts                           # bootstrapStdioApp()
+    ├── main.ts                             # bootstrapStdioApp()
     └── app/
         ├── app-stdio-onyvore.module.ts
-        ├── app-stdio-onyvore-config.class.ts
+        ├── app-stdio-onyvore-config.class.ts    # settings pushed from the host
         └── services/
-            ├── onyvore-message-handler.service.ts
-            ├── nlp.service.ts
-            ├── search-index.service.ts
-            ├── link-graph.service.ts
-            ├── metadata.service.ts
-            ├── persistence.service.ts
-            └── reconciliation.service.ts
+            ├── onyvore-message-handler.service.ts    # the JSON-RPC surface
+            ├── indexing.service.ts                   # the shared two-phase pipeline
+            ├── reconciliation.service.ts             # init, reconcile, rename detection
+            ├── ignore.service.ts                     # .onyvoreignore (no spec)
+            ├── nlp.service.ts                        # compromise wrapper
+            ├── term-store.service.ts                 # shared term vectors (no spec)
+            ├── search-index.service.ts               # Orama: retrieval
+            ├── search.service.ts                     # query semantics
+            ├── mention.service.ts                    # title matching
+            ├── tfidf.service.ts                      # similarity
+            ├── wikilink.service.ts                   # [[links]]
+            ├── link-graph.service.ts                 # all three edge types
+            ├── metadata.service.ts                   # mtimes + content hashes (no spec)
+            └── persistence.service.ts                # versioned artifacts (no spec)
 ```
 
-**Browser Webview** (`apps/browser/onyvore/`)
+**Browser Webview** (`apps/browser/onyvore/`) — one bundle serving three views, selected by an injected `window.__ONYVORE_VIEW__`.
 ```
-├── project.json
-├── index.html
-├── vite.config.ts
-├── tsconfig.json                         # extends tsconfig.web.json
-├── tsconfig.app.json
 └── src/
-    ├── main.tsx                           # imports @vscode/codicons CSS + onyvore.css
+    ├── main.tsx                            # imports @vscode/codicons CSS + onyvore.css
     └── app/
-        ├── app.tsx                        # Shell: toolbar, NotebookSelector, SearchBar, NotebookSidebar, LinksPanel
-        ├── onyvore.css                    # All styles — VS Code theme vars only (--vscode-editor-foreground/background)
+        ├── app.tsx                         # picks sidebar / links / graph by view flag
+        ├── onyvore.css                     # all styles, VS Code theme vars only
         ├── components/
-        │   ├── NotebookSidebar.tsx        # Fetches notebooks, renders single viewed notebook
-        │   ├── NotebookSelector.tsx       # Dropdown with typeahead for switching notebooks
-        │   ├── NotebookTree.tsx           # File tree for a single notebook (uses TreeItem)
-        │   ├── UnlinkedNotes.tsx          # Orphan detection (uses TreeItem)
-        │   ├── LinksPanel.tsx             # Outbound + Inbound links for active note
-        │   ├── OutboundLinks.tsx          # Outbound link list (uses TreeItem)
-        │   ├── InboundLinks.tsx           # Inbound link list (uses TreeItem)
-        │   ├── SearchBar.tsx              # Omnipresent search with snippet previews (uses TreeItem)
-        │   ├── CollapsibleSection.tsx     # Reusable collapsible section with inverted-color header
-        │   ├── TreeItem.tsx               # Shared tree item: label, sublabel, icon, badge, responsive
-        │   ├── Icons.tsx                  # VS Code codicon wrappers (SearchIcon, FileIcon, etc.)
-        │   └── ErrorBoundary.tsx          # React error boundary
-        ├── hooks/
-        │   └── use-rpc-request.hook.ts
+        │   ├── NotebookSidebar.tsx         # file tree for the viewed notebook
+        │   ├── NotebookSelector.tsx        # dropdown with typeahead
+        │   ├── NotebookTree.tsx
+        │   ├── UnlinkedNotes.tsx           # orphans
+        │   ├── LinksPanel.tsx              # five link buckets for the active note
+        │   ├── LinkList.tsx                # one bucket; serves both directions
+        │   ├── GraphPanel.tsx              # canvas force-directed graph
+        │   ├── SearchBar.tsx               # search, scope toggle, keyboard nav
+        │   ├── SearchHelp.tsx              # the operator reference
+        │   ├── CollapsibleSection.tsx
+        │   ├── TreeItem.tsx
+        │   ├── Icons.tsx
+        │   └── ErrorBoundary.tsx
+        ├── hooks/use-rpc-request.hook.ts
         └── state/
             ├── store.ts
-            ├── middleware/
-            │   └── message-bus.middleware.ts
-            ├── slices/
-            │   ├── jsonrpc-request-entity.slice.ts
-            │   ├── jsonrpc-response-entity.slice.ts
-            │   ├── notebooks.slice.ts
-            │   ├── active-notebook.slice.ts
-            │   ├── links.slice.ts
-            │   └── search-results.slice.ts
-            └── types/
-                └── root-state.type.ts
+            ├── middleware/message-bus.middleware.ts
+            ├── slices/                     # jsonrpc request/response, notebooks,
+            │                               # activeNotebook, links, searchResults
+            └── types/root-state.type.ts
 ```
 
-**Shared Library** (`libs/isomorphic/onyvore/`)
+**Shared Library** (`libs/isomorphic/onyvore/`) — types, constants, and the pure logic both processes must agree on. Each module has a `.spec.ts` beside it.
 ```
-├── project.json
-├── tsconfig.json                         # extends tsconfig.isomorphic.json
-├── tsconfig.lib.json
-├── tsconfig.spec.json
 └── src/
-    ├── index.ts                          # barrel export
+    ├── index.ts                            # barrel export
     └── lib/
-        ├── constants/
-        │   ├── onyvore-commands.constant.ts
-        │   ├── onyvore-rpc-methods.constant.ts
-        │   └── stop-nouns.constant.ts
-        └── types/
-            ├── notebook.types.ts
-            ├── edge.types.ts
-            ├── metadata.types.ts
-            ├── links-panel.types.ts
-            └── file-event.types.ts
+        ├── constants/                      # commands, RPC methods, stop nouns
+        ├── types/                          # notebook, edge, metadata,
+        │                                   # links-panel, file-event, graph
+        ├── wikilinks/wikilink-parser.ts    # parse + resolve [[links]]
+        ├── search/parse-search-query.ts    # query syntax
+        ├── search/search-text.ts           # the word-prefix matching rule
+        └── rename/detect-renames.ts        # pair a delete with a create
 ```
+
+**Why logic lives in the shared library.** It started as types and constants only. Three pieces of behavior have since moved in, each because the extension host and the stdio server were about to implement the same rule twice and drift:
+
+| Module | Both sides need it because |
+|---|---|
+| `wikilink-parser` | The server builds link edges; the host powers ctrl-click, completion, and diagnostics. Separate resolvers would let the editor open a different note than the graph linked. |
+| `search-text` | The server finds snippet positions; the webview highlights them. When they disagreed, searching `run` highlighted the middle of "brunch". |
+| `parse-search-query` | The server executes a query; the webview explains it back to the user. |
+| `detect-renames` | Used only by the server today, but it is pure pairing logic with no I/O, and it belongs with the artifact types it reads. |
+
+The rule: pure functions that define a *shared meaning* belong here. Anything that touches the filesystem, the index, or the `vscode` API does not.
 
 ---
 
 ## 2. Communication Architecture
 
+Three processes, two transports. The extension host is the only one that talks to both.
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  VS Code Extension Host (apps/vscode/onyvore)                    │
+│ Extension Host  (apps/vscode/onyvore)                            │
 │                                                                  │
-│  ┌────────────────────┐  ┌────────────────────────────────────┐  │
-│  │ CommandHandlers     │  │ WebviewHandlers                    │  │
-│  │ • initializeNotebook│  │ • getNotebooks                    │  │
-│  │ • discoverNotebooks │  │ • getLinksForNote                 │  │
-│  │ • searchNotebook    │  │ • getSearchResults                │  │
-│  │ • rebuildNotebook   │  │ • openFile (→ vscode.open)        │  │
-│  └────────────────────┘  │ • getActiveNotebook                │  │
-│                          │ • pickDirectory (→ vscode.showOpen) │  │
-│  ┌────────────────────┐  └────────────────────────────────────┘  │
-│  │ ServerNotification  │                                         │
-│  │ Handlers            │  ┌────────────────────────────────────┐  │
-│  │ • initProgress      │  │ FileWatcherService                 │  │
-│  │ • reconcileProgress │  │ • FileSystemWatcher per notebook   │  │
-│  │ • notebookReady     │  │ • 300ms debounce                  │  │
-│  │ • indexUpdated       │  │ • forwards events to stdio server │  │
-│  └────────────────────┘  └────────────────────────────────────┘  │
-│           ▲                          ▲                            │
-└───────────┼──────────────────────────┼────────────────────────────┘
-            │ stdio JSON-RPC           │ postMessage
-            ▼                          ▼
-┌──────────────────────────┐  ┌─────────────────────────────────────┐
-│ Stdio Server             │  │ React Webview                       │
-│ (apps/stdio/onyvore)     │  │ (apps/browser/onyvore)              │
-│                          │  │                                     │
-│ NlpService               │  │ App (shell + viewed notebook state) │
-│ SearchIndexService       │  │ ├── NotebookSelector (dropdown)     │
-│ LinkGraphService         │  │ ├── SearchBar (omnipresent)         │
-│ MetadataService          │  │ ├── NotebookSidebar (single notebook│
-│ PersistenceService       │  │ │   ├── NotebookTree (TreeItem)     │
-│ ReconciliationService    │  │ │   └── UnlinkedNotes (TreeItem)    │
-│                          │  │ └── LinksPanel                      │
-│ @StdioHandler methods    │  │     ├── OutboundLinks (TreeItem)    │
-│ Progress notifications   │  │     └── InboundLinks (TreeItem)     │
-│                          │  │                                     │
-│                          │  │ Redux + MessageBus middleware       │
-└──────────────────────────┘  └─────────────────────────────────────┘
+│  @CommandHandler       @WebviewHandler        Editor providers    │
+│  • initializeNotebook  • openFile             • completion        │
+│  • discoverNotebooks   • pickDirectory        • document links    │
+│  • searchNotebook      • getActiveNotebook    • hover             │
+│  • rebuildNotebook     • setViewedNotebook    • diagnostics       │
+│                        • getConfiguration     • quick fixes       │
+│                                                                  │
+│  @ServerNotificationHandler   NotebookDiscovery   FileWatcher     │
+│  • initProgress               NotebookFiles       • per notebook  │
+│  • reconcileProgress          ActiveNotebook      • debounced     │
+│  • notebookReady              Settings            SecondaryViews  │
+│  • indexUpdated                                                  │
+└───────────┬──────────────────────────────┬───────────────────────┘
+            │ stdio JSON-RPC               │ postMessage
+            ▼                              ▼
+┌───────────────────────────┐  ┌───────────────────────────────────┐
+│ Stdio Server              │  │ React Webview                     │
+│ (apps/stdio/onyvore)      │  │ (apps/browser/onyvore)            │
+│                           │  │                                   │
+│ MessageHandler  ← the API │  │ App — picks view by injected flag │
+│ Indexing        ← pipeline│  │                                   │
+│ Reconciliation            │  │ sidebar: Selector, SearchBar,     │
+│ Nlp · TermStore           │  │          NotebookTree,            │
+│ SearchIndex · Search      │  │          UnlinkedNotes            │
+│ Mention · Tfidf · Wikilink│  │ links:   LinksPanel → LinkList ×5 │
+│ LinkGraph                 │  │ graph:   GraphPanel (canvas)      │
+│ Metadata · Persistence    │  │                                   │
+│ Ignore                    │  │ Redux + MessageBus middleware     │
+└───────────────────────────┘  └───────────────────────────────────┘
 ```
+
+The framework wires exactly one webview. The Links and Graph views are
+registered by `SecondaryViewsService`, which reuses the exported
+`defaultWebviewMessageHandler` for requests and forwards the three
+notifications those panels need — the framework's broadcast reaches only the
+primary provider.
 
 ### 2.1 Message Flow
 
 **File change → index update → UI refresh:**
 1. `FileWatcherService` (extension host) detects `.md` file event
 2. Debounces 300ms, then sends `notebook.fileEvent` request to stdio server
-3. Stdio server processes event (NLP, index, link graph, persist)
+3. Stdio server pairs any rename, registers the whole batch, then derives edges once per file, and persists
 4. Stdio server sends `notebook.indexUpdated` notification back to extension
 5. Extension broadcasts notification to webview
 6. Webview Redux store updates, React components re-render
 
 **User searches:**
-1. User types in the omnipresent `SearchBar` (always visible in sidebar)
-2. Webview dispatches `notebook.search` request via `useRpc()` hook
-3. Stdio server runs Orama query with graph boost, extracts all matching text snippets, filters out zero-match results, returns ranked results with snippets
-4. `SearchBar` renders results inline using `TreeItem` for file name/path, with all snippets shown below each result and search terms highlighted
+1. User types in the omnipresent `SearchBar`; keystrokes are debounced
+2. Webview dispatches `notebook.search` (or `notebook.searchAll`) via `useRpc()`
+3. `SearchService` parses the query, retrieves through the strictness ladder, applies filters (phrases, exclusions, folder, graph predicates), and ranks with the graph boost
+4. Every hit returns with `matchedIn` and either snippets or a lead preview
+5. `SearchBar` renders results inline, highlighting with the same word-prefix rule the server matched on
 
 **User clicks link in Links Panel:**
 1. Webview dispatches `openFile` to extension via `@WebviewHandler`
@@ -231,6 +224,11 @@ The extension host is the orchestrator. It owns VS Code API access and delegates
 | `NotebookDiscoveryService` | Scans workspace for `.onyvore/` directories. Runs on activation and on `Onyvore: Discover Notebooks`. Registers discovered notebooks with the stdio server |
 | `ActiveNotebookService` | Listens to `vscode.window.onDidChangeActiveTextEditor`. Resolves which notebook owns the focused file. Updates the status bar indicator. Notifies the webview of active notebook changes |
 | `FileWatcherService` | Creates one `vscode.FileSystemWatcher` per registered notebook. Applies `.onyvoreignore` exclusions. Watches `.onyvoreignore` for changes. Debounces events (300ms). Forwards batched events to the stdio server via JSON-RPC |
+| `NotebookFilesService` | Caches each notebook's file list in the host, refreshed on `notebook.ready` / `notebook.indexUpdated`. The editor features need it synchronously and often, so round-tripping to the server per keystroke is not viable |
+| `OnyvoreSettingsService` | Reads `onyvore.*` settings, pushes the graph-shaping ones to the server on activation and on change, and exposes the host-only ones |
+| `WikilinkFeaturesService` | Registers completion, document-link, and hover providers for `[[wikilinks]]` |
+| `WikilinkDiagnosticsService` | Reports unresolved wikilinks and provides the create-note / repoint quick fixes |
+| `LinksViewService` | Registers the Links panel as a second webview view and forwards the notifications it needs |
 
 **Key design decision:** The extension host does NOT run compromise, Orama, or any link graph computation. It is a thin layer over VS Code APIs that routes events to the stdio server. This keeps the extension host responsive — NLP and indexing run in the child process without blocking the UI.
 
@@ -243,12 +241,19 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | Service | Responsibility |
 |---|---|
 | `OnyvoreMessageHandlerService` | `@StdioHandler` methods — the JSON-RPC API surface. Routes requests to domain services |
-| `NlpService` | Wraps compromise. Extracts noun phrases from markdown content. Runs the extraction pipeline (PRD Section 4.4): parse → decompose → stop nouns → min length |
-| `SearchIndexService` | Wraps Orama. Manages per-notebook in-memory search indexes. Handles document insert/update/remove. Runs search queries with graph-boosted ranking. Serializes/deserializes `index.bin` |
-| `LinkGraphService` | Manages per-notebook link graphs. Matches noun phrases against note titles. Computes edges (one per source-target pair, aggregated counts). Handles create/change/delete/reverse-match operations. Serializes/deserializes `links.json` |
-| `MetadataService` | Manages per-notebook `metadata.json`. Tracks last-seen modification times. Provides the diff-against-filesystem API for reconciliation |
-| `PersistenceService` | Writes `index.bin`, `links.json`, `metadata.json` to disk. Called after each debounced batch and on deactivation. Handles periodic checkpointing during initial computation |
-| `ReconciliationService` | Runs on startup for existing notebooks. Loads persisted state, diffs against filesystem, processes deltas via create/change/delete paths. Sends progress notifications to extension host |
+| `IndexingService` | The shared indexing pipeline, including `renameDocument`, which re-keys a moved note instead of reprocessing it. Two phases: `registerDocument` populates every index, `computeEdges` derives links from the populated corpus. Used by file events, ignore changes, initialization, and reconciliation alike |
+| `NlpService` | Wraps compromise. Extracts and lemmatizes noun terms. Runs the extraction pipeline (PRD Section 4.4): parse → decompose → stop nouns → min length |
+| `TermStoreService` | Single owner of per-document term vectors, shared by `TfidfService` and `MentionService` so terms are stored once per notebook rather than once per consumer |
+| `SearchIndexService` | Wraps Orama. Manages per-notebook indexes and a `relativePath → document id` map so removal is exact. Owns retrieval — the strictness ladder and where each hit matched. Serializes/deserializes `index.bin` |
+| `SearchService` | Query semantics: parse, retrieve, filter, rank. Owns the operators, including the graph-reading ones (`links:`, `related:`, `is:orphan`) |
+| `MentionService` | Owns the title index (basename + path-qualified variants) and computes `mention` edges by matching extracted phrases against note titles, in both directions |
+| `TfidfService` | Owns document-frequency state and computes `similar` edges by cosine similarity, with cached vectors and a per-note cap |
+| `WikilinkService` | Parses `[[wikilinks]]`, resolves them Obsidian-compatibly, and caches link text so edges appear when a missing target is later created |
+| `LinkGraphService` | Stores all edges with outbound/inbound indexes. Type-aware replacement (symmetric vs. directional), orphan detection that ignores `similar`, and `links.json` serialization |
+| `IgnoreService` | Loads and evaluates `.onyvoreignore` for the server, covering filesystem scans as well as live events |
+| `MetadataService` | Manages per-notebook `metadata.json`. Tracks last-seen modification times for reconciliation |
+| `PersistenceService` | Versioned atomic writes of `index.bin`, `links.json`, `metadata.json`, `tfidf.json`. Reports whether the full artifact set loaded, so callers can rebuild instead of trusting partial state |
+| `ReconciliationService` | Full initialization and startup reconciliation. Scans the filesystem, diffs against metadata, drives the two-phase pipeline, sends progress notifications |
 
 **StdioHandler methods (JSON-RPC API):**
 
@@ -257,17 +262,21 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `notebook.register` | ext → server | Register a discovered notebook (path, initial state) |
 | `notebook.unregister` | ext → server | Remove a notebook (e.g., `.onyvore/` deleted) |
 | `notebook.fileEvent` | ext → server | Batched file watcher events (create/change/delete array) |
-| `notebook.ignoreChanged` | ext → server | `.onyvoreignore` was modified — re-evaluate all files |
-| `notebook.search` | webview → server | Full-text search query for active notebook |
-| `notebook.getLinks` | webview → server | Get outbound + inbound links for a specific note |
+| `notebook.ignoreChanged` | ext → server | `.onyvoreignore` was modified — reload rules and reconcile |
+| `notebook.search` | webview → server | Search within one notebook, returning hits plus whether the search widened |
+| `notebook.searchAll` | webview → server | Search every notebook, grouped by notebook |
+| `notebook.getGraph` | webview → server | Nodes and edges for the graph view |
+| `notebook.getLinks` | webview → server | Get all five link buckets for a specific note |
 | `notebook.getNotebooks` | webview → server | List all registered notebooks with their file trees |
 | `notebook.getOrphans` | webview → server | Get unlinked notes for a notebook |
 | `notebook.rebuild` | ext → server | Delete derived artifacts and re-index from scratch |
 | `notebook.reconcile` | ext → server | Trigger startup reconciliation for a notebook |
 | `notebook.initialize` | ext → server | First-time initialization (full scan) for a new notebook |
+| `server.configure` | ext → server | Push user settings; recomputes similarity edges when they change |
 | `openFile` | webview → ext | Open a note in the editor (`@WebviewHandler`) |
 | `pickDirectory` | webview → ext | Show native directory picker dialog (`@WebviewHandler`) |
 | `getActiveNotebook` | webview → ext | Get current active notebook context (`@WebviewHandler`) |
+| `setViewedNotebook` | webview → ext | Report which notebook the sidebar is showing, so palette commands target it (`@WebviewHandler`) |
 | `getConfiguration` | webview → ext | Read VS Code configuration (`@WebviewHandler`) |
 | `getWorkspaceFolders` | webview → ext | List workspace folders (`@WebviewHandler`) |
 
@@ -284,38 +293,44 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 
 ### 3.3 Browser Webview (`app-browser-onyvore`)
 
-The React UI rendered in VS Code's sidebar. All data comes from the stdio server via JSON-RPC through the Redux message bus middleware.
+One React bundle serves all three webview views. The extension host injects
+`window.__ONYVORE_VIEW__`, and `App` renders the sidebar, the Links panel, or
+the Graph accordingly. All data arrives via JSON-RPC through the Redux message
+bus middleware.
 
 **Components:**
 
-| Component | Purpose | Data Source |
+| Component | Purpose | Data source |
 |---|---|---|
-| `App` | Shell — manages viewed notebook state, toolbar, layout | Redux `notebooks` + `activeNotebook` slices |
-| `NotebookSelector` | Dropdown with typeahead for switching notebooks | Receives notebooks list as props from App |
-| `SearchBar` | Omnipresent search with inline snippet results | `notebook.search` via `useRpc()` — returns ranked results with all matching snippets |
-| `NotebookSidebar` | Fetches all notebooks, renders single viewed notebook | `notebook.getNotebooks` — receives `notebookId` prop |
-| `NotebookTree` | File tree for one notebook (uses TreeItem) | Notebook data from NotebookSidebar |
-| `UnlinkedNotes` | Orphan detection (uses TreeItem) | `notebook.getOrphans` — notes with zero links |
-| `LinksPanel` | Outbound + Inbound links for active note | `notebook.getLinks` — follows active notebook from Redux |
-| `OutboundLinks` | Outbound link list (uses TreeItem) | Subset of LinksPanel data |
-| `InboundLinks` | Inbound link list (uses TreeItem) | Subset of LinksPanel data |
-| `CollapsibleSection` | Reusable collapsible with inverted-color header, chevron, badge, actions | Wraps NotebookTree, UnlinkedNotes, OutboundLinks, InboundLinks |
-| `TreeItem` | Shared tree row: label, sublabel (responsive), icon, badge | Used by all tree-like lists |
-| `Icons` | VS Code codicon font wrappers | `@vscode/codicons` CSS classes |
-| `ErrorBoundary` | React error boundary | Catches render errors |
+| `App` | Shell. Picks which view to render; owns viewed-notebook state in the sidebar | `notebooks` + `activeNotebook` slices |
+| `NotebookSelector` | Dropdown with typeahead for switching notebooks | Props from `App` |
+| `SearchBar` | Search, scope toggle, syntax help, keyboard navigation | `notebook.search` / `notebook.searchAll` |
+| `SearchHelp` | The operator reference, shown inline under the input | Static |
+| `NotebookSidebar` | File tree for the viewed notebook | `notebook.getNotebooks` |
+| `NotebookTree` | The tree itself | Props from `NotebookSidebar` |
+| `UnlinkedNotes` | Orphans — no authored or mention links | `notebook.getOrphans` |
+| `LinksPanel` | Five buckets for the active note | `notebook.getLinks` |
+| `LinkList` | One bucket. `notePath` is already the *other* note, so it serves both directions | Props from `LinksPanel` |
+| `GraphPanel` | Canvas force-directed link graph | `notebook.getGraph` |
+| `CollapsibleSection` | Collapsible with inverted-color header, chevron, badge | Wraps the tree and link sections |
+| `TreeItem` | Shared row: label, sublabel, icon, badge, selection state | Every tree-like list |
+| `Icons` | Codicon font wrappers | `@vscode/codicons` |
+| `ErrorBoundary` | Catches render errors | — |
 
-**Redux Slices:**
+**Redux slices:**
 
 | Slice | Purpose |
 |---|---|
-| `notebooks.slice` | Notebook list and file trees. Updated on `notebook.indexUpdated` notifications |
-| `active-notebook.slice` | Active notebook ID and active note path. Updated by `@WebviewHandler` broadcast |
-| `links.slice` | Current note's outbound and inbound links. Refreshed on active note change and `notebook.indexUpdated` |
-| `search-results.slice` | Search results for the active query |
+| `notebooks` | Notebook list and file trees; `indexVersion` bumps on `notebook.indexUpdated` to trigger refetches |
+| `activeNotebook` | Active notebook id and note path, from `activeNotebook.changed` |
+| `links` | Links for the current note |
+| `searchResults` | `visible` is set by `search.show` so the palette command focuses the input |
+| `jsonrpcRequest` / `jsonrpcResponse` | Entity slices backing `useRpc()` — a request is dispatched, the middleware sends it, the response lands by id |
 
 ### 3.4 Shared Library (`lib-isomorphic-onyvore`)
 
-Type-safe contracts shared across all three tiers.
+Type-safe contracts shared across all three tiers, plus the pure functions both
+processes must agree on (see §1.2 for why each one lives here).
 
 **Constants:**
 
@@ -338,12 +353,15 @@ export const onyvoreRpcMethods = {
   NOTEBOOK_FILE_EVENT: 'notebook.fileEvent',
   NOTEBOOK_IGNORE_CHANGED: 'notebook.ignoreChanged',
   NOTEBOOK_SEARCH: 'notebook.search',
+  NOTEBOOK_SEARCH_ALL: 'notebook.searchAll',
   NOTEBOOK_GET_LINKS: 'notebook.getLinks',
+  NOTEBOOK_GET_GRAPH: 'notebook.getGraph',
   NOTEBOOK_GET_NOTEBOOKS: 'notebook.getNotebooks',
   NOTEBOOK_GET_ORPHANS: 'notebook.getOrphans',
   NOTEBOOK_REBUILD: 'notebook.rebuild',
   NOTEBOOK_RECONCILE: 'notebook.reconcile',
   NOTEBOOK_INITIALIZE: 'notebook.initialize',
+  SERVER_CONFIGURE: 'server.configure',
   // Notifications (server → ext → webview)
   NOTEBOOK_INIT_PROGRESS: 'notebook.initProgress',
   NOTEBOOK_RECONCILE_PROGRESS: 'notebook.reconcileProgress',
@@ -355,6 +373,7 @@ export const onyvoreRpcMethods = {
   OPEN_FILE: 'openFile',
   PICK_DIRECTORY: 'pickDirectory',
   GET_ACTIVE_NOTEBOOK: 'getActiveNotebook',
+  SET_VIEWED_NOTEBOOK: 'setViewedNotebook',
   GET_CONFIGURATION: 'getConfiguration',
   GET_WORKSPACE_FOLDERS: 'getWorkspaceFolders',
 } as const;
@@ -402,11 +421,15 @@ export interface NotebookFile {
 
 ```typescript
 // edge.types.ts
+export type EdgeType = 'explicit' | 'mention' | 'similar';
+
 export interface Edge {
   source: string;            // relative path of source note
   target: string;            // relative path of target note
-  noun: string;              // highest-count matching noun phrase (for display)
-  count: number;             // aggregate occurrence count
+  type: EdgeType;            // how the edge was derived
+  noun: string;              // matched phrase, or top shared term for `similar`
+  displayText?: string;      // [[target|display text]], `explicit` only
+  count: number;             // occurrences (`mention`) or similarity*100 (`similar`)
 }
 ```
 
@@ -425,16 +448,21 @@ export interface NotebookMetadata {
 ```typescript
 // links-panel.types.ts
 export interface LinkEntry {
-  notePath: string;          // relative path of the linked note
+  notePath: string;          // relative path of the other note
   noteTitle: string;         // basename (for display)
-  noun: string;              // top matching noun phrase
-  count: number;             // aggregate occurrence count
+  type: EdgeType;
+  noun: string;              // matched phrase or top shared term
+  displayText?: string;
+  count: number;
 }
 
 export interface LinksForNote {
   notePath: string;
-  outbound: LinkEntry[];     // ranked by count desc
-  inbound: LinkEntry[];      // ranked by count desc
+  explicitOutbound: LinkEntry[];  // sorted by title
+  explicitInbound: LinkEntry[];   // sorted by title
+  mentionOutbound: LinkEntry[];   // ranked by count desc
+  mentionInbound: LinkEntry[];    // ranked by count desc
+  similar: LinkEntry[];           // ranked by score desc; symmetric, so undirected
 }
 ```
 
@@ -456,164 +484,169 @@ export interface FileEventBatch {
 
 ---
 
+**Shared logic:**
+
+| Export | Contract it defines |
+|---|---|
+| `parseWikilinks`, `resolveWikilinkTarget`, `wikilinkCompletionFor` | Where `[[foo]]` points. Used by the server's link graph and the host's completion, navigation, hover, and diagnostics |
+| `wordPrefixPattern`, `hasWordPrefix`, `hasPhrase`, `matchPositions` | What counts as a text match — word prefix, never mid-word. Used by the server's snippets and the webview's highlighter |
+| `parseSearchQuery`, `describeQuery`, `isFilterOnlyQuery` | What a query means. Used by the server to execute and the webview to explain |
+| `detectRenames` | When a delete plus a create is one moved note |
+
+---
+
 ## 4. Key Implementation Details
 
-### 4.1 NLP Pipeline (`NlpService`)
+### 4.1 Term Extraction (`NlpService`, `TermStoreService`)
+
+`NlpService.extractTerms` turns note content into a `Map<term, count>`:
 
 ```typescript
-import nlp from 'compromise';
-import { STOP_NOUNS } from '@onivoro/isomorphic-onyvore';
-
-interface ExtractionResult {
-  /** All surviving candidates with their occurrence counts */
-  phrases: Map<string, number>;  // normalized phrase → count
-}
-
-function extractNounPhrases(content: string): ExtractionResult {
-  const doc = nlp(content);
-  const rawPhrases: string[] = doc.nouns().out('array');
-  const phrases = new Map<string, number>();
-
-  for (const raw of rawPhrases) {
-    const normalized = raw.toLowerCase().trim();
-    if (normalized.length <= 1) continue;
-
-    const words = normalized.split(/\s+/);
-
-    // Full phrase
-    if (!STOP_NOUNS.has(normalized)) {
-      phrases.set(normalized, (phrases.get(normalized) ?? 0) + 1);
-    }
-
-    // Decompose: individual words (only for multi-word phrases)
-    if (words.length > 1) {
-      for (const word of words) {
-        if (word.length <= 1) continue;
-        if (STOP_NOUNS.has(word)) continue;
-        phrases.set(word, (phrases.get(word) ?? 0) + 1);
-      }
-    }
-  }
-
-  return { phrases };
-}
+const doc = nlp(content);
+const rawPhrases: string[] = doc.nouns().toSingular().out('array');
 ```
 
-### 4.2 Link Graph Computation (`LinkGraphService`)
+For each phrase: lowercase, trim, strip punctuation, drop anything of length ≤ 1. The full phrase is kept unless it is a stop noun, and multi-word phrases are additionally decomposed into their individual words, each filtered independently against `STOP_NOUNS`. `toSingular()` lemmatizes, so "clusters" and "cluster" are one term.
 
-The link graph is a per-notebook in-memory data structure with two indexes for efficient lookups:
+The resulting map is stored in `TermStoreService`, which owns per-document term vectors for the whole server. Both `TfidfService` and `MentionService` read the same maps — at the 10k-note target, storing them once per notebook rather than once per consumer is the difference between hundreds of megabytes and tens.
+
+### 4.2 Link Graph (`LinkGraphService` and the three edge producers)
+
+Three services each produce one edge type, and `LinkGraphService` stores all of them together.
 
 ```typescript
+type EdgeType = 'explicit' | 'mention' | 'similar';
+
 interface LinkGraph {
-  /** All edges, keyed by "source::target" */
+  /** All edges, keyed by "type::source::target" — the type is part of the key
+   *  so all three can coexist between the same pair of notes. */
   edges: Map<string, Edge>;
-
-  /** source path → set of edge keys */
   outboundIndex: Map<string, Set<string>>;
-
-  /** target path → set of edge keys */
   inboundIndex: Map<string, Set<string>>;
-
-  /** Cached noun phrases per file: relativePath → Map<normalizedPhrase, count> */
-  phraseCache: Map<string, Map<string, number>>;
-
-  /** All note title variants (lowercase): title → set of relative paths.
-   *  Each file registers its basename ("overview") plus, for files in subdirectories,
-   *  a path-qualified variant ("work overview" for work/overview.md). */
-  titleIndex: Map<string, Set<string>>;
+  /** Every known file, so a note with no edges can be reported as an orphan. */
+  files: Set<string>;
 }
 ```
 
-**Operations:**
+**`WikilinkService` → `explicit`.** Parses `[[target]]` and `[[target|display]]` after stripping fenced and inline code, then resolves each target against the notebook's file list: `.md` suffix ignored, `/` means path match, otherwise case-insensitive basename with shortest-path tiebreak. Parsed link text is cached per source file, which is what makes `computeInboundEdges` possible — when a previously missing target is created, the cached text is re-resolved and the edge appears without the source note changing.
 
-**Create** (new file added):
-1. Extract noun phrases → cache in `phraseCache`
-2. Register all title variants in `titleIndex` (basename + path-qualified for subdirectory files)
-3. Match phrases against `titleIndex` → add outbound edges (skip self-links)
-4. Reverse match: scan `phraseCache` of all other files for phrases matching any of this file's title variants → add inbound edges
+**`MentionService` → `mention`.** Maintains a title index mapping each lowercase title variant to the notes carrying it:
 
-**Change** (file modified):
-1. Remove all outbound edges for this file from `edges` and `outboundIndex`
-2. Re-extract noun phrases → update `phraseCache`
-3. Match new phrases against `titleIndex` → add outbound edges
-
-**Delete** (file removed):
-1. Remove all outbound edges for this file
-2. Remove all inbound edges pointing to this file
-3. Remove from `phraseCache` and `titleIndex` (all title variants)
-
-**Matching logic:**
 ```typescript
-function matchPhrasesAgainstTitles(
-  sourcePath: string,
-  phrases: Map<string, number>,
-  titleIndex: Map<string, Set<string>>,
-): Edge[] {
-  const sourceBasename = basename(sourcePath, '.md').toLowerCase();
-  const edgeMap = new Map<string, Edge>();  // "source::target" → Edge
+titleIndexes: Map<notebookId, Map<titleVariant, Set<relativePath>>>
+fileTitles:   Map<notebookId, Map<relativePath, string[]>>
+```
 
-  for (const [phrase, count] of phrases) {
-    const matchingPaths = titleIndex.get(phrase);
-    if (!matchingPaths) continue;
+`overview.md` registers `overview`; `work/overview.md` registers both `overview` and `work overview`. The second map exists so `unregisterFile` can remove exactly the variants a file added, without disturbing another note that shares a basename.
 
-    for (const targetPath of matchingPaths) {
-      // Self-link exclusion
-      if (targetPath === sourcePath) continue;
+`computeOutboundEdges` walks the source's terms, looks each up in the title index, skips self-matches, and aggregates per target: counts sum, and `noun` records the single strongest phrase. `computeInboundEdges` runs the same match in reverse over cached terms, which is how a newly created note picks up mentions that already existed.
 
-      const key = `${sourcePath}::${targetPath}`;
-      const existing = edgeMap.get(key);
-      if (existing) {
-        existing.count += count;
-        // Keep the noun with the highest individual count
-        if (count > (phrases.get(existing.noun) ?? 0)) {
-          existing.noun = phrase;
-        }
-      } else {
-        edgeMap.set(key, {
-          source: sourcePath,
-          target: targetPath,
-          noun: phrase,
-          count,
-        });
-      }
-    }
-  }
+**`TfidfService` → `similar`.** Holds document frequency and derives vectors on demand:
 
-  return Array.from(edgeMap.values());
+```typescript
+interface TfidfCorpus {
+  tf: NotebookTerms;   // borrowed from TermStoreService
+  df: Map<string, number>;
+  docCount: number;
+  version: number;     // bumped on every df/docCount mutation
+  cache: Map<string, CachedVector>;
+  cacheVersion: number;
 }
 ```
 
-### 4.3 Search Index (`SearchIndexService`)
+`version` is the invalidation mechanism. Every TF-IDF vector depends on corpus-wide document frequency, so any edit invalidates all of them; the cache is rebuilt when `cacheVersion !== version` and reused otherwise. Without it, `computeEdgesForDocument` re-vectorizes the entire notebook on every save.
+
+Terms with `idf === 0` — present in every document — are dropped as non-discriminative, which is why a document whose only terms are universal produces no edges at all.
+
+Both entry points apply `maxSimilarPerNote`. In `computeAllEdges`, candidates are collected per note and a pair survives if *either* endpoint ranks it in its own top matches, so the cap never strips a note's single strongest relationship.
+
+**Type-aware replacement.** `LinkGraphService` exposes three replacement modes because the edge types have different ownership semantics:
+
+| Method | Used for | Removes |
+|---|---|---|
+| `replaceOutboundEdgesForFile` | `explicit`, `mention` | Only outbound edges of that type — the source owns its links |
+| `replaceInboundEdgesForFile` | `explicit`, `mention` on create | Only inbound edges of that type |
+| `replaceSymmetricEdgesForFile` | `similar` | Both directions — the file is equally source and target |
+| `replaceAllEdgesOfType` | Full rebuilds | Every edge of that type in the notebook |
+
+**Orphan detection** walks `files` and reports any note with no non-`similar` edge in either direction. Excluding `similar` is deliberate: cosine similarity connects nearly every note to something, so counting it would leave "Unlinked Notes" permanently empty.
+
+**Persistence.** `loadEdges` skips any edge whose `type` is not one of the three known values, rather than coercing unknown edges to a default — combined with the format version on `links.json`, a stale artifact rebuilds instead of silently loading as the wrong type.
+
+### 4.3 Editor Features (`WikilinkFeaturesService`, `WikilinkDiagnosticsService`)
+
+Both resolve links through `parseWikilinks` / `resolveWikilinkTarget` in the isomorphic library — the same functions `WikilinkService` uses to build the graph. That sharing is the point: if the two processes resolved separately, ctrl-clicking `[[foo]]` could open a different note than the one the graph drew an edge to.
+
+`parseWikilinks` reports byte offsets alongside each target, which is what makes editor ranges possible. Fenced and inline code are blanked with equal-length whitespace rather than removed, so every subsequent offset stays valid.
+
+Completion detects an open `[[` by scanning back along the cursor's line for an unclosed pair, and inserts `wikilinkCompletionFor(file, allFiles)` — the bare basename, or the path-qualified form when the basename is ambiguous. That helper and the resolver are tested together for round-tripping, so a suggestion always resolves back to the note that produced it.
+
+Diagnostics refresh on document open, change, and configuration change, and also on `notebook.indexUpdated` — a note created elsewhere can resolve links that were broken a moment ago.
+
+### 4.4 Search (`SearchService`, `SearchIndexService`)
+
+Retrieval and meaning are separated: `SearchIndexService` owns the Orama index and answers "which documents match these words"; `SearchService` owns what a query *means*, so the operators reading the link graph sit beside the ones reading text.
+
+**Indexed fields** are `title` (×4), `pathText` (×2), and `content` (×1). `relativePath` is deliberately outside the schema — Orama preserves non-schema fields on the stored document, so the path still returns with every hit without every note sharing the token `md`, which used to make searching "md" match the whole notebook.
+
+**The retrieval ladder** widens recall only as far as it must, each rung running only if the one above found nothing:
 
 ```typescript
-import { create, insert, remove, search, save, load } from '@orama/orama';
+1. run({ threshold: 0 })   // every term, exact — typing more narrows
+2. run({})                 // any term, exact — reported as `widened`
+3. run({ tolerance: 1 })   // typo tolerance, terms >= 4 chars only
+```
 
-// Schema per notebook
-const schema = {
-  relativePath: 'string',
-  title: 'string',       // path-qualified: "parentDir basename" for subdirectory files, "basename" for root files
-  content: 'string',     // full markdown content
+Applying tolerance on every pass is what made `md` match "my" and defeated the all-terms threshold: a fuzzy match always qualified, so nothing ever narrowed.
+
+**Matching is by word prefix**, defined once in `lib-isomorphic-onyvore` and shared with the webview's highlighter. When the two disagreed, searching `run` highlighted the middle of "brunch" — a match the engine never made.
+
+**Every hit is kept.** Whether a result is useful and what to display for it are different questions; conflating them discarded a note matched by its own filename for having no content snippet. Each hit reports `matchedIn` so the UI can explain why it surfaced, and falls back to a lead preview when there is no snippet.
+
+**Filter-only queries** (`is:orphan`, `links:x`, `in:folder/`) have nothing to rank, so they bypass the index, enumerate the notebook, and order by path.
+
+**Cross-notebook groups** are ordered by where the best hit matched rather than by score. BM25 depends on each index's own corpus statistics, so raw scores are not comparable between notebooks and ordering by them made group order an artifact of notebook size.
+
+**The index itself:**
+
+```typescript
+const SCHEMA = {
+  title: 'string',      // path-qualified: "work overview" for work/overview.md
+  pathText: 'string',   // directory segments + basename, extension stripped
+  content: 'string',
 } as const;
 
-// Search queries match against title, relativePath, and content
-// This allows "work overview" to preferentially surface work/overview.md
+const FIELD_BOOST = { title: 4, pathText: 2, content: 1 };
 ```
 
-**Graph-boosted ranking:** After Orama returns text-relevance results, each result's score is adjusted by its inbound link count from the `LinkGraphService`:
+`relativePath` is absent on purpose. Orama preserves non-schema fields on the
+stored document, so the path returns with every hit without becoming a
+searchable token — when it was indexed, every note contained `md` and searching
+that matched the whole notebook.
 
-```
-finalScore = oramaScore * (1 + log2(1 + inboundLinkCount))
-```
+**Snippets** are ~120-character windows around each match, merged when they
+overlap, with positions from the shared word-prefix rule.
 
-This gives diminishing returns to additional links while ensuring well-connected notes outrank isolated ones at equivalent text relevance.
-
-**Snippet extraction:** For each search result, `extractSnippets()` finds all occurrences of every search term in the document content, creates ~120-character windows around each match (with 40 characters of leading context), and merges overlapping windows. Results with zero content matches are filtered out before returning. The search response type is:
+**The response** carries more than text now, because a hit needs to explain
+itself:
 
 ```typescript
-Array<{ relativePath: string; title: string; score: number; snippets: string[] }>
+interface NotebookSearchHit {
+  relativePath: string;
+  title: string;
+  score: number;
+  snippets: string[];              // empty for a title-only match
+  matchedIn: SearchMatchField[];   // 'content' | 'title' | 'path'
+  preview?: string;                // lead excerpt when there are no snippets
+  approximate?: boolean;           // reached through typo tolerance
+}
 ```
 
-### 4.4 Persistence (`PersistenceService`)
+### 4.5 Persistence (`PersistenceService`)
+
+**Two version constants, deliberately independent.** `ARTIFACT_VERSION` (currently 2) covers the JSON artifacts written by `PersistenceService`; `INDEX_FORMAT_VERSION` (currently 3) covers the serialized Orama envelope, which changed when `relativePath` left the schema. They move separately so a change to one does not force a rebuild driven by the other — though in practice `loadAll` requires all four artifacts to load, so any single mismatch rebuilds the notebook anyway.
+
+
 
 **Triggers:**
 - After each debounced batch of incremental updates completes
@@ -633,9 +666,12 @@ async function persistArtifact(filePath: string, data: Buffer | string): Promise
 **`links.json` format:**
 ```json
 {
+  "version": 2,
   "edges": [
-    { "source": "recipes/sourdough.md", "target": "flour.md", "noun": "flour", "count": 3 },
-    { "source": "recipes/sourdough.md", "target": "starter.md", "noun": "sourdough starter", "count": 7 }
+    { "source": "recipes/sourdough.md", "target": "flour.md", "type": "mention", "noun": "flour", "count": 3 },
+    { "source": "recipes/sourdough.md", "target": "starter.md", "type": "explicit", "noun": "starter", "count": 100 },
+    { "source": "recipes/sourdough.md", "target": "bread.md", "type": "similar", "noun": "dough", "count": 42 },
+    { "source": "bread.md", "target": "recipes/sourdough.md", "type": "similar", "noun": "dough", "count": 42 }
   ]
 }
 ```
@@ -643,14 +679,25 @@ async function persistArtifact(filePath: string, data: Buffer | string): Promise
 **`metadata.json` format:**
 ```json
 {
+  "version": 2,
   "files": {
-    "recipes/sourdough.md": { "mtimeMs": 1711584000000 },
-    "flour.md": { "mtimeMs": 1711580400000 }
+    "recipes/sourdough.md": {
+      "relativePath": "recipes/sourdough.md",
+      "mtimeMs": 1711584000000,
+      "hash": "9c1185a5c5e9fc54612808977ee8f548b2258d31"
+    },
+    "flour.md": {
+      "relativePath": "flour.md",
+      "mtimeMs": 1711580400000,
+      "hash": "3f786850e387550fdab836ed7e6dc881de23001b"
+    }
   }
 }
 ```
 
-### 4.5 File Watcher (`FileWatcherService`)
+`hash` is what makes rename detection possible; it is optional, so notebooks indexed before it existed still load and simply never pair.
+
+### 4.6 File Watcher (`FileWatcherService`)
 
 Runs in the extension host. One `vscode.FileSystemWatcher` per registered notebook.
 
@@ -688,14 +735,19 @@ function onFileEvent(event: FileEvent) {
 ```
 
 **`.onyvoreignore` watching:**
-The extension host watches the `.onyvoreignore` file at `{notebookRoot}/.onyvoreignore` using a separate `FileSystemWatcher`. On change, it sends `notebook.ignoreChanged` to the stdio server, which re-evaluates all files against the new patterns.
+The extension host watches `{notebookRoot}/.onyvoreignore` with a separate `FileSystemWatcher`. On change it refreshes its local copy — so live events stop flowing for newly-ignored paths — and sends `notebook.ignoreChanged` carrying only the notebook id.
 
-### 4.6 Startup Reconciliation (`ReconciliationService`)
+The server owns the authoritative filter (`IgnoreService`) and responds by reloading the rules and re-running reconciliation. It does not need a path diff from the host: newly-ignored files simply stop appearing in the filesystem scan and are treated as deletions, while newly-admitted files look newly created. The host's copy is an optimization; the server's is correctness.
+
+### 4.7 Startup Reconciliation (`ReconciliationService`)
 
 Runs in the stdio server when `notebook.reconcile` is received.
 
+Before diffing, the handler verifies the persisted artifact set. `PersistenceService.loadAll` returns false if any of the four files is missing, unreadable, or from a different format version — because they are written independently, a crash can leave `metadata.json` claiming files that `index.bin` does not contain. In that case the notebook is cleared and fully rebuilt rather than reconciled against state that is already inconsistent.
+
 ```typescript
 async function reconcile(notebookId: string): Promise<void> {
+  await this.ignoreService.load(notebookId);   // scans honor .onyvoreignore
   const metadata = await this.metadataService.load(notebookId);
   const currentFiles = await this.scanFilesystem(notebookId);  // all .md files
 
@@ -729,11 +781,21 @@ async function reconcile(notebookId: string): Promise<void> {
     this.sendProgress(notebookId, ++processed, total);
   }
 
-  // Then creates and modifications
+  // Register every changed document before deriving links from any of them:
+  // TF-IDF needs corpus-wide document frequency and mention matching needs
+  // every title present, so a one-pass loop would compute wrong edges.
   for (const path of [...created, ...modified]) {
     const content = await this.readFile(notebookId, path);
-    const eventType = created.includes(path) ? 'create' : 'change';
-    await this.processFileEvent(notebookId, { type: eventType, relativePath: path }, content);
+    contentCache.set(path, content);
+    await this.indexingService.registerDocument(notebookId, path, content, mtime);
+  }
+
+  for (const path of [...created, ...modified]) {
+    this.indexingService.computeEdges(notebookId, path, contentCache.get(path), {
+      // A new note may already be mentioned, or be the target of a wikilink
+      // that could not resolve until now.
+      refreshInbound: created.includes(path),
+    });
     this.sendProgress(notebookId, ++processed, total);
   }
 
@@ -746,43 +808,19 @@ async function reconcile(notebookId: string): Promise<void> {
 
 ## 5. VS Code Extension Manifest
 
-Key sections of `apps/vscode/onyvore/package.json`:
+The full manifest is `apps/vscode/onyvore/package.json`. What matters
+architecturally:
 
-```json
-{
-  "name": "onyvore",
-  "displayName": "Onyvore",
-  "description": "Local-first personal knowledge management for VS Code",
-  "version": "1.0.0",
-  "publisher": "onivoro",
-  "engines": { "vscode": "^1.74.0" },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
-  "main": "./dist/main.js",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/onivoro/onyvore.git"
-  },
-  "contributes": {
-    "commands": [
-      { "command": "onyvore.initializeNotebook", "title": "Onyvore: Initialize Notebook" },
-      { "command": "onyvore.discoverNotebooks", "title": "Onyvore: Discover Notebooks" },
-      { "command": "onyvore.searchNotebook", "title": "Onyvore: Search Notebook" },
-      { "command": "onyvore.rebuildNotebook", "title": "Onyvore: Rebuild Notebook" }
-    ],
-    "viewsContainers": {
-      "activitybar": [
-        { "id": "onyvore", "title": "Onyvore", "icon": "resources/icon.svg" }
-      ]
-    },
-    "views": {
-      "onyvore": [
-        { "type": "webview", "id": "onyvore.webview", "name": "Onyvore", "icon": "resources/icon.svg" }
-      ]
-    }
-  }
-}
-```
+| Contribution | Content |
+|---|---|
+| `commands` | The four in `onyvoreCommands`. The strings must match that constant and the `@CommandHandler` arguments. |
+| `viewsContainers.activitybar` | One container, `onyvore`. |
+| `views.onyvore` | Three webviews: `onyvore.webview` (sidebar), `onyvore.links`, `onyvore.graph`. |
+| `viewsWelcome` | The empty state for `onyvore.webview`, with a button running `onyvore.initializeNotebook`. |
+| `configuration` | The five `onyvore.*` settings (PRD §5.3). |
+| `activationEvents` | `onStartupFinished` — notebooks must be discovered without the user acting first. |
+
+**Three webview views, one bundle.** The extension framework wires a single webview provider, so `SecondaryViewsService` registers the Links and Graph views itself: requests reuse the exported `defaultWebviewMessageHandler`, and the three notifications the panel needs are forwarded explicitly because the framework's broadcast only reaches the primary provider. Each provider injects `window.__ONYVORE_VIEW__`, which is how one React build serves all three views.
 
 **Alignment checklist:**
 - `contributes.commands[*].command` ↔ `onyvoreCommands` constants ↔ `@CommandHandler()` decorators
@@ -793,185 +831,73 @@ Key sections of `apps/vscode/onyvore/package.json`:
 
 ## 6. Nx Configuration
 
-### 6.1 `tsconfig.base.json` Path Mapping
+Project configuration lives in each `project.json`; this section records only the
+decisions that are not obvious from reading them.
 
-Add to the existing `paths` object:
+### 6.1 Path mapping
 
-```json
-"@onivoro/isomorphic-onyvore": ["libs/isomorphic/onyvore/src/index.ts"]
-```
+`tsconfig.base.json` maps `@onivoro/isomorphic-onyvore` to
+`libs/isomorphic/onyvore/src/index.ts`. All three tiers import through that
+alias — never by relative path across a project boundary.
 
-### 6.2 Project Configurations
+### 6.2 Build decisions
 
-**`apps/vscode/onyvore/project.json`:**
-```json
-{
-  "name": "app-vscode-onyvore",
-  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "apps/vscode/onyvore/src",
-  "projectType": "application",
-  "targets": {
-    "build": {
-      "executor": "@nx/webpack:webpack",
-      "dependsOn": ["app-stdio-onyvore:build", "app-browser-onyvore:build"],
-      "outputs": ["{options.outputPath}"],
-      "defaultConfiguration": "production",
-      "options": {
-        "target": "node",
-        "compiler": "tsc",
-        "outputPath": "apps/vscode/onyvore/dist",
-        "main": "apps/vscode/onyvore/src/main.ts",
-        "tsConfig": "apps/vscode/onyvore/tsconfig.app.json",
-        "generatePackageJson": false,
-        "assets": [
-          { "input": "apps/vscode/onyvore", "glob": "package.json", "output": "." },
-          { "input": "apps/vscode/onyvore", "glob": "README.md", "output": "." },
-          { "input": "apps/vscode/onyvore", "glob": ".vscodeignore", "output": "." },
-          { "input": "apps/vscode/onyvore/src/assets", "glob": "**/*", "output": "./resources" },
-          { "input": "apps/stdio/onyvore/dist", "glob": "main.js", "output": "./server" },
-          { "input": "apps/stdio/onyvore/dist", "glob": "main.js.map", "output": "./server" },
-          { "input": "dist/apps/browser/onyvore", "glob": "**/*", "output": "./webview" }
-        ],
-        "isolatedConfig": true,
-        "sourceMap": true,
-        "webpackConfig": "apps/vscode/onyvore/webpack.config.js"
-      },
-      "configurations": {
-        "development": {},
-        "production": {}
-      }
-    },
-    "package": {
-      "executor": "nx:run-commands",
-      "dependsOn": ["build"],
-      "options": {
-        "command": "cd apps/vscode/onyvore/dist && node -e \"const p=require('./package.json');p.main='./main.js';require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2))\" && vsce package --no-dependencies --skip-license -o ../onyvore.vsix --baseContentUrl https://github.com/onivoro/onyvore --baseImagesUrl https://github.com/onivoro/onyvore"
-      }
-    }
-  },
-  "tags": []
-}
-```
+| Decision | Why |
+|---|---|
+| `app-vscode-onyvore:build` `dependsOn` the stdio and browser builds | The extension bundles both as assets, so building the host alone would ship stale ones. `npx nx build app-vscode-onyvore` is the only build command anyone needs. |
+| Stdio server and extension host use Webpack; webview and library use Vite | The two Node targets need `vscode` marked external and CommonJS output; the browser targets want ES modules and asset inlining. |
+| The stdio server is bundled to a single `main.js` | It is spawned as a child process from inside a VSIX, where `node_modules` is not present. Everything it needs must be in the bundle. |
+| `generatePackageJson: false` on the host | The extension manifest is hand-written and copied as an asset; a generated one would lose `contributes`. |
+| The `package` target rewrites `main` in the copied manifest | Source says `./dist/main.js` for local development; inside the VSIX the file sits at the root, so it becomes `./main.js`. |
 
-**`apps/stdio/onyvore/project.json`:**
-```json
-{
-  "name": "app-stdio-onyvore",
-  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "apps/stdio/onyvore/src",
-  "projectType": "application",
-  "targets": {
-    "build": {
-      "executor": "@nx/webpack:webpack",
-      "outputs": ["{options.outputPath}"],
-      "defaultConfiguration": "production",
-      "options": {
-        "target": "node",
-        "compiler": "tsc",
-        "outputPath": "apps/stdio/onyvore/dist",
-        "main": "apps/stdio/onyvore/src/main.ts",
-        "tsConfig": "apps/stdio/onyvore/tsconfig.app.json",
-        "generatePackageJson": false,
-        "isolatedConfig": true,
-        "sourceMap": true,
-        "webpackConfig": "apps/stdio/onyvore/webpack.config.js"
-      },
-      "configurations": {
-        "development": {},
-        "production": {}
-      }
-    }
-  },
-  "tags": []
-}
-```
+### 6.3 Test targets
 
-**`apps/browser/onyvore/project.json`:**
-```json
-{
-  "name": "app-browser-onyvore",
-  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "apps/browser/onyvore/src",
-  "projectType": "application",
-  "targets": {},
-  "tags": []
-}
-```
-
-**`libs/isomorphic/onyvore/project.json`:**
-```json
-{
-  "name": "lib-isomorphic-onyvore",
-  "$schema": "../../../node_modules/nx/schemas/project-schema.json",
-  "sourceRoot": "libs/isomorphic/onyvore/src",
-  "projectType": "library",
-  "targets": {
-    "build": {
-      "executor": "@nx/vite:build",
-      "generatePackageJson": true,
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "outputPath": "dist/libs/isomorphic/onyvore"
-      }
-    }
-  },
-  "tags": []
-}
-```
+`app-stdio-onyvore` and `lib-isomorphic-onyvore` have Jest targets; run both with
+`npx nx run-many -t test`. The extension host and webview have none — see the
+roadmap in PRD §9.1.
 
 ---
 
 ## 7. Dependencies
 
-### 7.1 Framework (`@onivoro/*`)
+Versions live in the root `package.json`. What matters here is the shape of the
+dependency set, and what is deliberately absent from it.
 
-| Package | Used In |
-|---|---|
-| `@onivoro/server-vscode` | `app-vscode-onyvore` |
-| `@onivoro/server-stdio` | `app-stdio-onyvore` |
-| `@onivoro/isomorphic-jsonrpc` | all tiers |
-| `@onivoro/browser-jsonrpc` | `app-browser-onyvore` |
-| `@onivoro/browser-redux` | `app-browser-onyvore` |
-
-### 7.2 Domain
-
-| Package | Used In | Purpose |
+| Layer | Packages | Note |
 |---|---|---|
-| `compromise` | `app-stdio-onyvore` | NLP noun-phrase extraction |
-| `@orama/orama` | `app-stdio-onyvore` | Full-text search index |
+| Framework | `@onivoro/server-vscode`, `@onivoro/server-stdio`, `@onivoro/isomorphic-jsonrpc`, `@onivoro/browser-jsonrpc`, `@onivoro/browser-redux` | The three-tier architecture and its JSON-RPC transport |
+| Domain | `compromise`, `@orama/orama`, `ignore` | NLP extraction and lemmatization; the search index; `.onyvoreignore` with gitignore semantics |
+| UI | `react`, `react-dom`, `@reduxjs/toolkit`, `react-redux`, `@vscode/codicons`, `uuid` | No component library |
+| DI and build | `@nestjs/*`, `reflect-metadata`, Webpack (Node targets), Vite (browser targets), `@vscode/vsce` | |
 
-### 7.3 UI
+**Written rather than imported:** TF-IDF similarity, the force-directed graph
+layout, and the search query parser. Each is small enough that a dependency
+would cost more than it saves, and the graph renderer additionally runs under a
+webview CSP that blocks external scripts. The zero-binary constraint (PRD §3)
+rules out native modules regardless — no SQLite, no compiled search engine.
 
-| Package | Used In | Purpose |
-|---|---|---|
-| `react`, `react-dom` | `app-browser-onyvore` | UI framework |
-| `@reduxjs/toolkit`, `react-redux` | `app-browser-onyvore` | State management |
-| `@vscode/codicons` | `app-browser-onyvore` | VS Code icon font (codicon CSS classes) |
-| `uuid` | `app-browser-onyvore` | JSON-RPC request IDs |
+### 7.1 Styling and the webview CSP
 
-**Styling:** No component library. All styles are in `onyvore.css` using only two VS Code CSS custom properties: `--vscode-editor-foreground` and `--vscode-editor-background`. Derived colors (borders, hover states, scrollbars) use `color-mix(in srgb, ...)` for opacity variations. Section headers invert the two color roles. The codicon font is inlined as base64 via Vite's `assetsInlineLimit` to avoid webview path resolution issues, with `data:` added to the CSP `font-src` directive.
+All styles are in `onyvore.css`, driven entirely by VS Code theme variables, so
+the UI follows the user's theme without a palette of its own. Derived colors
+(borders, hover, scrollbars) use `color-mix(in srgb, ...)`; section headers
+invert the foreground and background roles.
 
-### 7.4 Webview Build & CSP
+Two related workarounds make the icon font load inside a webview:
 
-**Vite config** (`apps/browser/onyvore/vite.config.ts`): Sets `assetsInlineLimit: 200000` to inline the codicon `.ttf` font as a base64 data URI, avoiding VS Code webview path resolution issues with font URLs.
+* Vite's `assetsInlineLimit: 200000` inlines the codicon `.ttf` as a base64
+  data URI, sidestepping webview path resolution for font URLs.
+* The webview providers add `data:` to the CSP `font-src` directive
+  (`html.replace('font-src ', 'font-src data: ')`) so that inlined font is
+  allowed to load.
 
-**CSP override** (`OnyvoreWebviewProvider.getHtmlForWebview`): Adds `data:` to the `font-src` CSP directive so the base64-inlined font loads: `html.replace('font-src ', 'font-src data: ')`.
+### 7.2 Root scripts
 
-### 7.5 Build
-
-| Package | Used In | Purpose |
-|---|---|---|
-| `@nestjs/common`, `@nestjs/core` | `app-vscode-onyvore`, `app-stdio-onyvore` | DI framework |
-| `reflect-metadata` | `app-vscode-onyvore` | NestJS decorator metadata |
-| `@nx/webpack`, `webpack` | `app-vscode-onyvore`, `app-stdio-onyvore` | Bundling |
-| `@nx/vite`, `vite`, `@vitejs/plugin-react` | `app-browser-onyvore`, `lib-isomorphic-onyvore` | Bundling |
-| `@vscode/vsce` | devDependency (root) | VSIX packaging |
-
-### 7.6 Root Package Scripts
-
-```json
-"onyvore:vsix": "npx nx run app-vscode-onyvore:package"   // Build + package VSIX
-"onyvore:install": "code --install-extension apps/vscode/onyvore/onyvore.vsix"  // Install locally
+```bash
+npm run onyvore:vsix      # nx run app-vscode-onyvore:package
+npm run onyvore:install   # code --install-extension .../onyvore.vsix
 ```
 
-The `package` target runs `build` (which chains stdio + browser + vscode builds), patches `package.json` main entry for the flat dist layout, and runs `vsce package`. Output: `apps/vscode/onyvore/onyvore.vsix`.
+`package` chains the three builds, rewrites `main` in the copied manifest for
+the flat VSIX layout, and runs `vsce package`. Output:
+`apps/vscode/onyvore/onyvore.vsix`.

@@ -2,13 +2,19 @@
   "name": "onyvore",
   "displayName": "Onyvore",
   "description": "Local-first personal knowledge management for VS Code",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "publisher": "onivoro",
-  "engines": { "vscode": "^1.74.0" },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
   "license": "MIT",
   "icon": "resources/icon.png",
-  "categories": ["Notebooks"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Notebooks"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/main.js",
   "repository": {
     "type": "git",
@@ -16,20 +22,95 @@
   },
   "contributes": {
     "commands": [
-      { "command": "onyvore.initializeNotebook", "title": "Onyvore: Initialize Notebook" },
-      { "command": "onyvore.discoverNotebooks", "title": "Onyvore: Discover Notebooks" },
-      { "command": "onyvore.searchNotebook", "title": "Onyvore: Search Notebook" },
-      { "command": "onyvore.rebuildNotebook", "title": "Onyvore: Rebuild Notebook" }
+      {
+        "command": "onyvore.initializeNotebook",
+        "title": "Onyvore: Initialize Notebook"
+      },
+      {
+        "command": "onyvore.discoverNotebooks",
+        "title": "Onyvore: Discover Notebooks"
+      },
+      {
+        "command": "onyvore.searchNotebook",
+        "title": "Onyvore: Search Notebook"
+      },
+      {
+        "command": "onyvore.rebuildNotebook",
+        "title": "Onyvore: Rebuild Notebook"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "onyvore", "title": "Onyvore", "icon": "resources/icon.svg" }
+        {
+          "id": "onyvore",
+          "title": "Onyvore",
+          "icon": "resources/icon.svg"
+        }
       ]
     },
     "views": {
       "onyvore": [
-        { "type": "webview", "id": "onyvore.webview", "name": "Onyvore", "icon": "resources/icon.svg" }
+        {
+          "type": "webview",
+          "id": "onyvore.webview",
+          "name": "Onyvore",
+          "icon": "resources/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "onyvore.links",
+          "name": "Links",
+          "icon": "resources/icon.svg"
+        },
+        {
+          "type": "webview",
+          "id": "onyvore.graph",
+          "name": "Graph",
+          "icon": "resources/icon.svg"
+        }
       ]
-    }
+    },
+    "configuration": {
+      "title": "Onyvore",
+      "properties": {
+        "onyvore.relatedNotes.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Compute **Related Notes** by document similarity. Turn this off to rely on `[[wikilinks]]` and title mentions alone."
+        },
+        "onyvore.relatedNotes.threshold": {
+          "type": "number",
+          "default": 0.15,
+          "minimum": 0.01,
+          "maximum": 1,
+          "markdownDescription": "Minimum similarity (0\u20131) for two notes to count as related. Higher values mean fewer, closer matches."
+        },
+        "onyvore.relatedNotes.maxPerNote": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 100,
+          "markdownDescription": "How many related notes to keep per note. Bounds both the panel and the size of `links.json`."
+        },
+        "onyvore.fileWatcher.debounceMs": {
+          "type": "number",
+          "default": 300,
+          "minimum": 50,
+          "maximum": 5000,
+          "markdownDescription": "How long to wait for file changes to settle before reindexing. Raise it if an external tool writes many notes at once."
+        },
+        "onyvore.wikilinks.showUnresolved": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Report `[[wikilinks]]` that point at no existing note as warnings in the Problems panel."
+        }
+      }
+    },
+    "viewsWelcome": [
+      {
+        "view": "onyvore.webview",
+        "contents": "No notebooks found in this workspace.\n\nA notebook is any folder containing an `.onyvore` directory. Your notes stay as ordinary markdown files \u2014 Onyvore only adds an index alongside them.\n\n[Initialize Notebook](command:onyvore.initializeNotebook)"
+      }
+    ]
   }
 }

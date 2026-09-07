@@ -14,6 +14,7 @@ import * as path from 'path';
 export class ActiveNotebookService implements OnModuleInit, OnModuleDestroy {
   private activeNotebookId: string | null = null;
   private activeNotePath: string | null = null;
+  private viewedNotebookId: string | null = null;
   private statusBarItem: any = null;
   private disposable: any = null;
 
@@ -66,19 +67,42 @@ export class ActiveNotebookService implements OnModuleInit, OnModuleDestroy {
     return this.activeNotePath;
   }
 
+  /** The notebook shown in the sidebar, which the user selects explicitly. */
+  getViewedNotebookId(): string | null {
+    return this.viewedNotebookId;
+  }
+
+  setViewedNotebookId(notebookId: string | null): void {
+    this.viewedNotebookId = notebookId;
+  }
+
+  /**
+   * The notebook a sidebar action should target: the one on screen, falling
+   * back to the one the editor is in.
+   */
+  getTargetNotebookId(): string | null {
+    return this.viewedNotebookId ?? this.activeNotebookId;
+  }
+
   recheckActiveEditor(): void {
     const editor = this.vscode.window.activeTextEditor;
     this.onEditorChanged(editor ?? null);
   }
 
   private onEditorChanged(editor: any): void {
-    // When editor loses focus (command palette, terminal, etc.), keep the last known state
+    // Losing focus entirely (command palette, terminal, sidebar) is not a
+    // change of note — keep the last known state so the panel does not blank
+    // out while the user runs a command.
     if (!editor) return;
 
     const filePath = editor.document.uri.fsPath;
 
-    // Only update when a markdown file is focused; ignore non-markdown files
-    if (!filePath.endsWith('.md')) return;
+    // Focusing a different, non-note document *is* a change: the panel has no
+    // links to show for it and must say so rather than keep stale ones.
+    if (!filePath.endsWith('.md')) {
+      this.setActive(null, null);
+      return;
+    }
 
     const notebook = this.notebookDiscovery.findNotebookForFile(filePath);
     if (!notebook) {

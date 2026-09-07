@@ -25,7 +25,7 @@ Uses `@reduxjs/toolkit` with `buildReducers()` from `@onivoro/browser-redux`. Si
 | `jsonRpcResponseEntitySlice` | Entity adapter for incoming JSON-RPC responses. Keyed by request ID for lookup. |
 | `notebooks` | Notebook list with file trees and status. Updated on initial load and `notebook.indexUpdated` notifications. |
 | `activeNotebook` | Current notebook ID and active note relative path. Updated by `activeNotebook.changed` notifications from the extension host. |
-| `links` | Outbound and inbound links for the active note. Refreshed on active note change. |
+| `links` | All link buckets for the active note. Refreshed on active note change. |
 | `searchResults` | Search query, results array, visibility toggle. Drives the `SearchOverlay` component. |
 
 ### Message Bus Middleware (`src/app/state/middleware/message-bus.middleware.ts`)
@@ -60,21 +60,41 @@ Renders a single notebook's file tree as a flat MUI `List`. Each file entry show
 
 ### UnlinkedNotes
 
-Fetches orphan notes (zero inbound + outbound links) via `notebook.getOrphans` for a given notebook. Renders below the notebook's file tree with a "link off" icon. Hidden when there are no orphans.
+Fetches orphan notes (no `explicit` or `mention` edges; similarity is excluded) via `notebook.getOrphans` for a given notebook. Renders below the notebook's file tree with a "link off" icon. Hidden when there are no orphans.
 
 ### LinksPanel
 
-Displays outbound and inbound links for the active note. Subscribes to `activeNotebook.notebookId` and `activeNotebook.activeNotePath` from Redux. When both are present, fetches links via `notebook.getLinks`. When no markdown file is active, shows "Open a note to see its links."
+Displays the active note's links. Subscribes to `activeNotebook.notebookId` and `activeNotebook.activeNotePath` from Redux. When both are present, fetches via `notebook.getLinks`. When no markdown file is active, shows "Open a note to see its links."
 
-Contains two sub-components:
+Renders up to five collapsible sections, omitting any that are empty:
 
-### OutboundLinks
+| Section | Edge type | Shows |
+|---|---|---|
+| Links | `explicit` | Wikilinks this note authored |
+| Backlinks | `explicit` | Wikilinks pointing at this note |
+| Mentions | `mention` | Notes whose titles this note mentions, with occurrence counts |
+| Mentioned By | `mention` | Notes that mention this one |
+| Related Notes | `similar` | Similar notes by TF-IDF score. Symmetric, so a single undirected list |
 
-Renders notes that the active note links *to*. Each entry shows the target note title and the top matching noun phrase with aggregate count (e.g. "sourdough (5)"). Clicking navigates to the target note.
+Default open state cascades: wikilinks open when present, mentions open when there are no wikilinks, related notes open only when nothing else is there.
 
-### InboundLinks
+The panel is rendered by its own webview view, not as a section of the sidebar. `window.__ONYVORE_VIEW__ === 'links'` (injected by the extension host) makes `App` render only this panel, so one bundle serves both views.
 
-Renders notes that link *to* the active note (backlinks). Same display format as OutboundLinks but showing source notes.
+### LinkList
+
+Renders one bucket. `notePath` is already the *other* note — the target for outbound links, the source for inbound — so a single component serves both directions. Icons distinguish edge type (link / quote / references), and a count badge is shown for `mention` and `similar` entries but not for wikilinks, which have no meaningful count.
+
+### SearchBar
+
+Always visible above the tree. Results support arrow-key navigation with Enter to open and Escape to clear, and the highlighted result scrolls into view. `Onyvore: Search Notebook` dispatches `searchResults.show`, which focuses and selects the input.
+
+With more than one notebook in the workspace, an **All** toggle switches from `notebook.search` to `notebook.searchAll`; results are grouped under notebook headers, and keyboard selection indexes into the flattened list so it moves across groups.
+
+### GraphPanel
+
+Renders the notebook's link graph on a canvas, in its own view. The force simulation runs in a `requestAnimationFrame` loop with an annealing alpha: repulsion between all nodes (O(n²), safe because the server caps node count), springs per edge weighted by edge type, and mild gravity toward the center. Node positions are seeded on a golden-angle spiral so a reload does not reshuffle the layout.
+
+Colors come from VS Code chart theme variables read at startup. Labels are drawn only for the active note, the hovered node, and the best-connected few — labelling every node is unreadable at any real notebook size.
 
 ### SearchOverlay
 
