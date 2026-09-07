@@ -10,6 +10,9 @@ export {
 } from './lib/wikilinks/wikilink-parser';
 export type { ParsedWikilink } from './lib/wikilinks/wikilink-parser';
 
+export { detectRenames } from './lib/rename/detect-renames';
+export type { HashedPath, RenamePair } from './lib/rename/detect-renames';
+
 export type {
   NotebookInfo,
   NotebookFileTree,

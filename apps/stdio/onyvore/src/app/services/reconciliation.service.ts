@@ -2,7 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { MESSAGE_BUS, MessageBus } from '@onivoro/isomorphic-jsonrpc';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { onyvoreRpcMethods } from '@onivoro/isomorphic-onyvore';
+import { onyvoreRpcMethods, detectRenames } from '@onivoro/isomorphic-onyvore';
 import { LinkGraphService } from './link-graph.service';
 import { MetadataService } from './metadata.service';
 import { PersistenceService } from './persistence.service';
@@ -73,39 +73,82 @@ export class ReconciliationService {
 
     let processed = 0;
 
-    // Deletes first, so the corpus is correct before any edge is computed.
+    // Read everything that changed up front: contents are needed to derive
+    // edges, and their hashes are what identify a note renamed while the
+    // extension was not running.
+    const changedPaths = [...created, ...modified];
+    const contentCache = new Map<string, string>();
+    const hashes = new Map<string, string>();
+    const mtimes = new Map<string, number>();
+
+    for (const relPath of changedPaths) {
+      const content = await this.readFile(notebookId, relPath);
+      contentCache.set(relPath, content);
+      hashes.set(relPath, this.indexingService.hash(content));
+      mtimes.set(relPath, (await this.statFile(notebookId, relPath)).mtimeMs);
+    }
+
+    const renames = detectRenames(
+      deleted.map((relPath) => ({
+        relativePath: relPath,
+        hash: knownFiles[relPath]?.hash,
+      })),
+      created.map((relPath) => ({
+        relativePath: relPath,
+        hash: hashes.get(relPath),
+      })),
+    );
+
+    const renamedFrom = new Set(renames.map((r) => r.from));
+    const renamedTo = new Set(renames.map((r) => r.to));
+
+    for (const { from, to } of renames) {
+      await this.indexingService.renameDocument(
+        notebookId,
+        from,
+        to,
+        contentCache.get(to)!,
+        mtimes.get(to)!,
+        hashes.get(to),
+      );
+      processed++;
+      this.sendProgress(notebookId, processed, total);
+    }
+
+    // Remaining deletes, so the corpus is correct before any edge is computed.
     for (const relPath of deleted) {
+      if (renamedFrom.has(relPath)) continue;
       await this.indexingService.removeDocument(notebookId, relPath);
       processed++;
       this.sendProgress(notebookId, processed, total);
     }
 
-    // Register every changed document before deriving links from any of them.
-    const changedPaths = [...created, ...modified];
-    const contentCache = new Map<string, string>();
-    const createdSet = new Set(created);
-
+    // Register every remaining document before deriving links from any of them.
     for (const relPath of changedPaths) {
-      const content = await this.readFile(notebookId, relPath);
-      const stat = await this.statFile(notebookId, relPath);
-      contentCache.set(relPath, content);
+      if (renamedTo.has(relPath)) continue;
       await this.indexingService.registerDocument(
         notebookId,
         relPath,
-        content,
-        stat.mtimeMs,
+        contentCache.get(relPath)!,
+        mtimes.get(relPath)!,
+        hashes.get(relPath),
       );
     }
+
+    // A renamed note needs inbound links rebuilt as well: its title changed.
+    const refreshInbound = new Set([...created, ...renamedTo]);
 
     for (const relPath of changedPaths) {
       this.indexingService.computeEdges(
         notebookId,
         relPath,
         contentCache.get(relPath)!,
-        { refreshInbound: createdSet.has(relPath) },
+        { refreshInbound: refreshInbound.has(relPath) },
       );
-      processed++;
-      this.sendProgress(notebookId, processed, total);
+      if (!renamedTo.has(relPath)) {
+        processed++;
+        this.sendProgress(notebookId, processed, total);
+      }
     }
 
     await this.persistenceService.persistAll(notebookId);

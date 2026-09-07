@@ -102,6 +102,21 @@ export class TfidfService {
   }
 
   /**
+   * Re-key a document after a rename.
+   *
+   * Document frequency is unaffected — the same terms are still present in the
+   * same number of documents — so only the cache needs invalidating, and the
+   * O(terms) decrement/increment pair a remove + add would cost is avoided.
+   */
+  renameDocument(notebookId: string, from: string, to: string): void {
+    const corpus = this.corpora.get(notebookId);
+    if (!corpus || !corpus.tf.has(from)) return;
+
+    this.termStore.move(notebookId, from, to);
+    corpus.version++;
+  }
+
+  /**
    * Remove a document from the corpus. Decrements DF for all its terms.
    */
   removeDocument(notebookId: string, filePath: string): void {

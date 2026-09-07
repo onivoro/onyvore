@@ -184,7 +184,11 @@ Similarity scores are computed against the corpus as it stood when the edge was 
 * **Create:** The note is indexed, its terms extracted, and its outbound edges of all three types computed. Inbound edges are also refreshed — notes already in the corpus may mention the new title, and wikilinks that previously failed to resolve may now find it.
 * **Change:** The note is re-indexed and its outbound edges rebuilt. Its `similar` edges are replaced in both directions, since similarity is symmetric.
 * **Delete:** The note is removed from the search index, term store, metadata, and link graph. Every edge touching it is pruned from both directions.
-* **Rename:** `FileSystemWatcher` emits delete + create. The delete prunes old edges; the create rebuilds them against the new name. The graph self-heals, so no stable file IDs are needed. Wikilinks written against the old name become unresolved and are surfaced as such.
+* **Rename:** `FileSystemWatcher` emits delete + create, and a startup diff produces the same pair. Onyvore recognizes it by content hash and *moves* the note instead of reprocessing it: term vectors and document frequency are re-keyed rather than recomputed, skipping the NLP pass that dominates indexing cost.
+
+  Links are still rebuilt, because the note's *title* changed — notes mentioning the old name no longer match, and wikilinks written against the old name become unresolved and are surfaced as such (Section 4.6).
+
+  A hash only pairs when exactly one deletion and one creation share it. Identical content is ordinary — two empty notes, two copies of a template — and guessing which became which would attribute a note's links to the wrong file. Ambiguous groups fall back to delete + create, which is always correct, just slower.
 
 #### Initial Notebook Computation
 
@@ -233,6 +237,7 @@ The diagnostics are how renames are handled. Onyvore never rewrites user files, 
 ### 4.7 Metadata
 Onyvore derives metadata for each note and stores it in `metadata.json`. Metadata is computed from filesystem state:
 * **Last-seen modification time:** Used by startup reconciliation (Section 4.4) to detect files changed while the extension was not running.
+* **Content hash:** Used to recognize a rename as a move rather than a delete plus an unrelated create. Optional — a note indexed before hashing existed simply never pairs, and falls back to the slower path.
 
 ---
 
@@ -247,7 +252,7 @@ Each notebook contains a `.onyvore/` directory. Its presence is what makes the d
 | `notebook.json` | No | Marks the directory as a notebook. Survives `Rebuild`. |
 | `index.bin` | Yes | Serialized Orama search index, plus the path→document-id map used for precise removal. |
 | `links.json` | Yes | The computed link graph: every edge, of every type. |
-| `metadata.json` | Yes | Per-note last-seen modification time, used by reconciliation. |
+| `metadata.json` | Yes | Per-note last-seen modification time and content hash, used by reconciliation and rename detection. |
 | `tfidf.json` | Yes | Per-note term frequencies and corpus document frequencies. |
 
 Every derived file carries a format `version`. A version this build does not recognize is treated as unreadable and the notebook rebuilds — the artifacts are disposable by design, so this is always cheaper and safer than maintaining compatibility shims.
@@ -386,5 +391,4 @@ Obsidian's linking model assumes a human author creating `[[wikilinks]]` manuall
 ---
 
 ## 9. Future Considerations
-* **Rename Detection:** `FileSystemWatcher` emits delete + create for a rename, so the content is fully reprocessed even though it did not change. Matching content hashes within a short window would coalesce the pair into a single rename and skip the redundant work.
 * **Multilingual NLP:** compromise is English-only. Multilingual noun-phrase extraction would require evaluating alternative pure-JS NLP libraries or a pluggable extraction backend.

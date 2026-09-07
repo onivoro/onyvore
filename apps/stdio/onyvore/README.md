@@ -63,6 +63,8 @@ The shared indexing pipeline, used by file events, ignore changes, initializatio
 
 `computeEdges` takes `refreshInbound`, set when a note is newly created: existing notes may already mention its title, and wikilinks that previously failed to resolve may now find it.
 
+`renameDocument` handles a note that moved rather than changed. Terms and document frequency are re-keyed instead of recomputed, skipping the NLP pass — which is the expensive half of indexing and reads only content, which a rename leaves alone. Links are still rebuilt, because the note's title changed. Renames are recognized by content hash via `detectRenames`, which pairs a deletion with a creation only when exactly one of each shares a hash; identical content is ordinary enough that guessing would misattribute links.
+
 ### MentionService
 
 Owns the title index and produces `mention` edges.
@@ -128,7 +130,7 @@ Writes four derived artifacts to `{notebookRoot}/.onyvore/`:
 
 - `index.bin` — `{ version, index, docIds }`
 - `links.json` — `{ version, edges: Edge[] }`
-- `metadata.json` — `{ version, files: Record<relativePath, { relativePath, mtimeMs }> }`
+- `metadata.json` — `{ version, files: Record<relativePath, { relativePath, mtimeMs, hash? }> }`
 - `tfidf.json` — `{ version, tf, df }`
 
 `notebook.json` also lives there but is *not* derived: it marks the directory as a notebook and survives `Rebuild`.

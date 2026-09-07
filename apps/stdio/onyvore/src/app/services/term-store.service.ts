@@ -27,6 +27,17 @@ export class TermStoreService {
     return this.stores.get(notebookId)?.get(relativePath);
   }
 
+  /** Re-key a document's terms. Used on rename, where the terms are unchanged. */
+  move(notebookId: string, from: string, to: string): boolean {
+    const store = this.stores.get(notebookId);
+    const terms = store?.get(from);
+    if (!store || !terms) return false;
+
+    store.delete(from);
+    store.set(to, terms);
+    return true;
+  }
+
   remove(notebookId: string): void {
     this.stores.delete(notebookId);
   }

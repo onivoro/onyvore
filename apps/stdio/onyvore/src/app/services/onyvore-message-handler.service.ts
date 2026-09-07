@@ -9,6 +9,7 @@ import {
   type LinksForNote,
   type NotebookSearchGroup,
   type NotebookGraph,
+  detectRenames,
 } from '@onivoro/isomorphic-onyvore';
 import { SearchIndexService } from './search-index.service';
 import { LinkGraphService } from './link-graph.service';
@@ -175,16 +176,11 @@ export class OnyvoreMessageHandlerService {
         e.type !== 'delete' && !this.ignoreService.ignores(notebookId, e.relativePath),
     );
 
-    // Deletes first: every edge computation below reads the corpus, so it has
-    // to reflect the removals before anything is derived from it.
-    for (const event of deletes) {
-      await this.indexingService.removeDocument(notebookId, event.relativePath);
-    }
-
-    // Register the whole batch, then derive edges once per file. Computing
-    // edges inline would run a full corpus pass per file in the batch.
+    // Read every upsert up front: the contents are needed to derive edges, and
+    // their hashes are what identify a rename.
     const contentCache = new Map<string, string>();
-    const created = new Set<string>();
+    const hashes = new Map<string, string>();
+    const stats = new Map<string, number>();
 
     for (const event of upserts) {
       const fullPath = path.join(notebookId, event.relativePath);
@@ -194,21 +190,77 @@ export class OnyvoreMessageHandlerService {
           fs.stat(fullPath),
         ]);
         contentCache.set(event.relativePath, content);
-        if (event.type === 'create' || !this.metadataService.getFile(notebookId, event.relativePath)) {
-          created.add(event.relativePath);
-        }
-        await this.indexingService.registerDocument(
-          notebookId,
-          event.relativePath,
-          content,
-          stat.mtimeMs,
-        );
+        hashes.set(event.relativePath, this.indexingService.hash(content));
+        stats.set(event.relativePath, stat.mtimeMs);
       } catch {
         // Deleted or replaced between the event firing and this read.
       }
     }
 
+    // A rename arrives as delete + create. Pairing them lets the note move
+    // without re-running the NLP pass over content that did not change.
+    const renames = detectRenames(
+      deletes.map((e) => ({
+        relativePath: e.relativePath,
+        hash: this.metadataService.getFile(notebookId, e.relativePath)?.hash,
+      })),
+      upserts
+        .filter((e) => !this.metadataService.getFile(notebookId, e.relativePath))
+        .map((e) => ({ relativePath: e.relativePath, hash: hashes.get(e.relativePath) })),
+    );
+
+    const renamedFrom = new Set(renames.map((r) => r.from));
+    const renamedTo = new Map(renames.map((r) => [r.to, r.from]));
+
+    for (const { from, to } of renames) {
+      await this.indexingService.renameDocument(
+        notebookId,
+        from,
+        to,
+        contentCache.get(to)!,
+        stats.get(to) ?? Date.now(),
+        hashes.get(to),
+      );
+    }
+
+    // Remaining deletes, before any edge is derived from the corpus.
+    for (const event of deletes) {
+      if (renamedFrom.has(event.relativePath)) continue;
+      await this.indexingService.removeDocument(notebookId, event.relativePath);
+    }
+
+    // Register the rest of the batch, then derive edges once per file.
+    // Computing edges inline would run a full corpus pass per file.
+    const created = new Set<string>();
+
+    for (const event of upserts) {
+      if (renamedTo.has(event.relativePath)) continue;
+      const content = contentCache.get(event.relativePath);
+      if (content === undefined) continue;
+
+      if (
+        event.type === 'create' ||
+        !this.metadataService.getFile(notebookId, event.relativePath)
+      ) {
+        created.add(event.relativePath);
+      }
+
+      await this.indexingService.registerDocument(
+        notebookId,
+        event.relativePath,
+        content,
+        stats.get(event.relativePath) ?? Date.now(),
+        hashes.get(event.relativePath),
+      );
+    }
+
+    // A renamed note needs its inbound links rebuilt too: its title changed, so
+    // mentions of the old name no longer match and wikilinks against the new
+    // one now resolve.
+    for (const [to] of renamedTo) created.add(to);
+
     for (const [relativePath, content] of contentCache) {
+      if (renamedFrom.has(relativePath)) continue;
       this.indexingService.computeEdges(notebookId, relativePath, content, {
         refreshInbound: created.has(relativePath),
       });

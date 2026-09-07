@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { NlpService } from './nlp.service';
 import { SearchIndexService } from './search-index.service';
 import { LinkGraphService } from './link-graph.service';
@@ -30,12 +31,63 @@ export class IndexingService {
     private readonly mentionService: MentionService,
   ) {}
 
+  /** Content hash used to recognize a rename. */
+  hash(content: string): string {
+    return createHash('sha1').update(content).digest('hex');
+  }
+
+  /**
+   * Move a note that was renamed rather than edited.
+   *
+   * The saving is the NLP pass: extracting noun phrases dominates indexing
+   * cost, and a rename changes none of the content it reads. Term vectors and
+   * document frequency are re-keyed rather than recomputed.
+   *
+   * Links still have to be rebuilt — the note's *title* changed, so notes
+   * mentioning the old name no longer match and wikilinks written against it
+   * now resolve elsewhere or nowhere.
+   */
+  async renameDocument(
+    notebookId: string,
+    from: string,
+    to: string,
+    content: string,
+    mtimeMs: number,
+    contentHash?: string,
+  ): Promise<void> {
+    // Drop everything keyed by the old path, keeping the terms themselves.
+    this.linkGraphService.removeAllEdgesForFile(notebookId, from);
+    this.linkGraphService.unregisterFile(notebookId, from);
+    this.mentionService.unregisterFile(notebookId, from);
+    this.metadataService.removeFile(notebookId, from);
+    await this.searchIndexService.removeDocument(notebookId, from);
+
+    this.tfidfService.renameDocument(notebookId, from, to);
+    this.wikilinkService.renameFile(notebookId, from, to);
+
+    await this.searchIndexService.addDocument(
+      notebookId,
+      to,
+      this.searchTitleFromPath(to),
+      content,
+    );
+    this.mentionService.registerFile(notebookId, to);
+    this.linkGraphService.registerFile(notebookId, to);
+    this.metadataService.setFile(
+      notebookId,
+      to,
+      mtimeMs,
+      contentHash ?? this.hash(content),
+    );
+  }
+
   /** Phase 1 — add or replace a document across every index. */
   async registerDocument(
     notebookId: string,
     relativePath: string,
     content: string,
     mtimeMs: number,
+    contentHash?: string,
   ): Promise<void> {
     await this.searchIndexService.addDocument(
       notebookId,
@@ -48,7 +100,12 @@ export class IndexingService {
     this.tfidfService.setDocument(notebookId, relativePath, terms);
     this.mentionService.registerFile(notebookId, relativePath);
     this.linkGraphService.registerFile(notebookId, relativePath);
-    this.metadataService.setFile(notebookId, relativePath, mtimeMs);
+    this.metadataService.setFile(
+      notebookId,
+      relativePath,
+      mtimeMs,
+      contentHash ?? this.hash(content),
+    );
   }
 
   /**

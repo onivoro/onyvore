@@ -22,6 +22,15 @@ export class WikilinkService {
     this.parsedCache.get(notebookId)?.delete(sourceFile);
   }
 
+  /** Re-key a renamed note's parsed links; the content did not change. */
+  renameFile(notebookId: string, from: string, to: string): void {
+    const cache = this.parsedCache.get(notebookId);
+    const parsed = cache?.get(from);
+    if (!cache || !parsed) return;
+    cache.delete(from);
+    cache.set(to, parsed);
+  }
+
   /**
    * Extract wikilinks from content and resolve them to explicit edges.
    * Directional: the source note owns the links it wrote.

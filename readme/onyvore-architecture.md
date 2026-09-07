@@ -248,7 +248,7 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | Service | Responsibility |
 |---|---|
 | `OnyvoreMessageHandlerService` | `@StdioHandler` methods — the JSON-RPC API surface. Routes requests to domain services |
-| `IndexingService` | The shared indexing pipeline. Two phases: `registerDocument` populates every index, `computeEdges` derives links from the populated corpus. Used by file events, ignore changes, initialization, and reconciliation alike |
+| `IndexingService` | The shared indexing pipeline, including `renameDocument`, which re-keys a moved note instead of reprocessing it. Two phases: `registerDocument` populates every index, `computeEdges` derives links from the populated corpus. Used by file events, ignore changes, initialization, and reconciliation alike |
 | `NlpService` | Wraps compromise. Extracts and lemmatizes noun terms. Runs the extraction pipeline (PRD Section 4.4): parse → decompose → stop nouns → min length |
 | `TermStoreService` | Single owner of per-document term vectors, shared by `TfidfService` and `MentionService` so terms are stored once per notebook rather than once per consumer |
 | `SearchIndexService` | Wraps Orama. Manages per-notebook indexes and a `relativePath → document id` map so removal is exact. Runs queries with graph-boosted ranking. Serializes/deserializes `index.bin` |
@@ -633,11 +633,21 @@ async function persistArtifact(filePath: string, data: Buffer | string): Promise
 {
   "version": 2,
   "files": {
-    "recipes/sourdough.md": { "relativePath": "recipes/sourdough.md", "mtimeMs": 1711584000000 },
-    "flour.md": { "relativePath": "flour.md", "mtimeMs": 1711580400000 }
+    "recipes/sourdough.md": {
+      "relativePath": "recipes/sourdough.md",
+      "mtimeMs": 1711584000000,
+      "hash": "9c1185a5c5e9fc54612808977ee8f548b2258d31"
+    },
+    "flour.md": {
+      "relativePath": "flour.md",
+      "mtimeMs": 1711580400000,
+      "hash": "3f786850e387550fdab836ed7e6dc881de23001b"
+    }
   }
 }
 ```
+
+`hash` is what makes rename detection possible; it is optional, so notebooks indexed before it existed still load and simply never pair.
 
 ### 4.5 File Watcher (`FileWatcherService`)
 
