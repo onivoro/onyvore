@@ -77,7 +77,7 @@ describe('IndexingService', () => {
       await indexing.renameDocument(NB, 'old.md', 'new.md', 'findable content', 2);
 
       expect(searchIndex.getIndexedPaths(NB)).toEqual(['new.md']);
-      const hits = await searchIndex.searchNotebook(NB, 'findable');
+      const { hits } = await searchIndex.searchNotebook(NB, ['findable']);
       expect(hits.map((h) => h.relativePath)).toEqual(['new.md']);
     });
 

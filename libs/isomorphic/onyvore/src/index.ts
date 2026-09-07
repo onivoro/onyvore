@@ -10,6 +10,22 @@ export {
 } from './lib/wikilinks/wikilink-parser';
 export type { ParsedWikilink } from './lib/wikilinks/wikilink-parser';
 
+export {
+  parseSearchQuery,
+  isEmptyQuery,
+  isFilterOnlyQuery,
+  describeQuery,
+} from './lib/search/parse-search-query';
+export type { ParsedQuery } from './lib/search/parse-search-query';
+export {
+  tokenize,
+  wordPrefixPattern,
+  hasWordPrefix,
+  hasAnyWordPrefix,
+  hasPhrase,
+  matchPositions,
+} from './lib/search/search-text';
+
 export { detectRenames } from './lib/rename/detect-renames';
 export type { HashedPath, RenamePair } from './lib/rename/detect-renames';
 
@@ -18,7 +34,9 @@ export type {
   NotebookFileTree,
   NotebookFile,
   NotebookSearchHit,
+  NotebookSearchResults,
   NotebookSearchGroup,
+  SearchMatchField,
 } from './lib/types/notebook.types';
 export type { GraphNode, GraphEdge, NotebookGraph } from './lib/types/graph.types';
 export type { Edge, EdgeType } from './lib/types/edge.types';

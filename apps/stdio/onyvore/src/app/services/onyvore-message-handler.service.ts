@@ -8,6 +8,8 @@ import {
   type NotebookInfo,
   type LinksForNote,
   type NotebookSearchGroup,
+  type NotebookSearchResults,
+  type NotebookSearchHit,
   type NotebookGraph,
   detectRenames,
 } from '@onivoro/isomorphic-onyvore';
@@ -19,10 +21,30 @@ import { ReconciliationService } from './reconciliation.service';
 import { IndexingService } from './indexing.service';
 import { IgnoreService } from './ignore.service';
 import { TfidfService } from './tfidf.service';
+import { SearchService } from './search.service';
 import {
   AppStdioOnyvoreConfig,
   type OnyvoreServerSettings,
 } from '../app-stdio-onyvore-config.class';
+
+/**
+ * How strong a notebook's best hit is, on a scale that survives crossing
+ * notebooks.
+ *
+ * Raw scores cannot be compared between indexes — BM25 depends on each corpus's
+ * own statistics, so a 3.4 from a 40-note notebook and a 3.4 from a 4,000-note
+ * one mean different things, and ordering groups by them made group order an
+ * artifact of notebook size. Where the query matched is comparable: a title
+ * match is a strong signal in any notebook.
+ */
+function groupStrength(hit: NotebookSearchHit): number {
+  if (hit.approximate) return 0;
+  let strength = 0;
+  if (hit.matchedIn.includes('title')) strength += 3;
+  if (hit.matchedIn.includes('path')) strength += 2;
+  if (hit.matchedIn.includes('content')) strength += 1;
+  return strength;
+}
 
 interface RegisteredNotebook {
   id: string;
@@ -46,6 +68,7 @@ export class OnyvoreMessageHandlerService {
     private readonly indexingService: IndexingService,
     private readonly ignoreService: IgnoreService,
     private readonly tfidfService: TfidfService,
+    private readonly searchService: SearchService,
     private readonly config: AppStdioOnyvoreConfig,
   ) {}
 
@@ -312,14 +335,9 @@ export class OnyvoreMessageHandlerService {
     notebookId: string;
     query: string;
     limit?: number;
-  }): Promise<{ results: Array<{ relativePath: string; title: string; score: number; snippets: string[] }> }> {
+  }): Promise<NotebookSearchResults> {
     const { notebookId, query, limit } = params;
-    const results = await this.searchIndexService.searchNotebook(
-      notebookId,
-      query,
-      limit,
-    );
-    return { results };
+    return this.searchService.search(notebookId, query, limit);
   }
 
   /** Search every registered notebook, grouped so results stay attributable. */
@@ -327,27 +345,28 @@ export class OnyvoreMessageHandlerService {
   async searchAllNotebooks(params: {
     query: string;
     limit?: number;
-  }): Promise<{ groups: NotebookSearchGroup[] }> {
+  }): Promise<{ groups: NotebookSearchGroup[]; widened: boolean }> {
     const { query, limit } = params;
     const groups: NotebookSearchGroup[] = [];
+    let widened = false;
 
     for (const notebook of this.notebooks.values()) {
-      const results = await this.searchIndexService.searchNotebook(
-        notebook.id,
-        query,
-        limit,
-      );
-      if (results.length === 0) continue;
+      const result = await this.searchService.search(notebook.id, query, limit);
+      if (result.hits.length === 0) continue;
+      widened = widened || result.widened;
+
       groups.push({
         notebookId: notebook.id,
         notebookName: notebook.name,
-        results,
+        results: result.hits,
+        topScore: groupStrength(result.hits[0]),
       });
     }
 
-    // Notebooks with the strongest single hit first.
-    groups.sort((a, b) => (b.results[0]?.score ?? 0) - (a.results[0]?.score ?? 0));
-    return { groups };
+    groups.sort(
+      (a, b) => b.topScore - a.topScore || b.results.length - a.results.length,
+    );
+    return { groups, widened };
   }
 
   @StdioHandler(onyvoreRpcMethods.NOTEBOOK_GET_GRAPH)

@@ -251,7 +251,8 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `IndexingService` | The shared indexing pipeline, including `renameDocument`, which re-keys a moved note instead of reprocessing it. Two phases: `registerDocument` populates every index, `computeEdges` derives links from the populated corpus. Used by file events, ignore changes, initialization, and reconciliation alike |
 | `NlpService` | Wraps compromise. Extracts and lemmatizes noun terms. Runs the extraction pipeline (PRD Section 4.4): parse → decompose → stop nouns → min length |
 | `TermStoreService` | Single owner of per-document term vectors, shared by `TfidfService` and `MentionService` so terms are stored once per notebook rather than once per consumer |
-| `SearchIndexService` | Wraps Orama. Manages per-notebook indexes and a `relativePath → document id` map so removal is exact. Runs queries with graph-boosted ranking. Serializes/deserializes `index.bin` |
+| `SearchIndexService` | Wraps Orama. Manages per-notebook indexes and a `relativePath → document id` map so removal is exact. Owns retrieval — the strictness ladder and where each hit matched. Serializes/deserializes `index.bin` |
+| `SearchService` | Query semantics: parse, retrieve, filter, rank. Owns the operators, including the graph-reading ones (`links:`, `related:`, `is:orphan`) |
 | `MentionService` | Owns the title index (basename + path-qualified variants) and computes `mention` edges by matching extracted phrases against note titles, in both directions |
 | `TfidfService` | Owns document-frequency state and computes `similar` edges by cosine similarity, with cached vectors and a per-note cap |
 | `WikilinkService` | Parses `[[wikilinks]]`, resolves them Obsidian-compatibly, and caches link text so edges appear when a missing target is later created |
@@ -269,7 +270,7 @@ The stdio server is where the PRD's functional requirements are implemented. It 
 | `notebook.unregister` | ext → server | Remove a notebook (e.g., `.onyvore/` deleted) |
 | `notebook.fileEvent` | ext → server | Batched file watcher events (create/change/delete array) |
 | `notebook.ignoreChanged` | ext → server | `.onyvoreignore` was modified — reload rules and reconcile |
-| `notebook.search` | webview → server | Full-text search within one notebook |
+| `notebook.search` | webview → server | Search within one notebook, returning hits plus whether the search widened |
 | `notebook.searchAll` | webview → server | Search every notebook, grouped by notebook |
 | `notebook.getGraph` | webview → server | Nodes and edges for the graph view |
 | `notebook.getLinks` | webview → server | Get all five link buckets for a specific note |
@@ -568,7 +569,31 @@ Completion detects an open `[[` by scanning back along the cursor's line for an 
 
 Diagnostics refresh on document open, change, and configuration change, and also on `notebook.indexUpdated` — a note created elsewhere can resolve links that were broken a moment ago.
 
-### 4.3 Search Index (`SearchIndexService`)
+### 4.3 Search (`SearchService`, `SearchIndexService`)
+
+Retrieval and meaning are separated: `SearchIndexService` owns the Orama index and answers "which documents match these words"; `SearchService` owns what a query *means*, so the operators reading the link graph sit beside the ones reading text.
+
+**Indexed fields** are `title` (×4), `pathText` (×2), and `content` (×1). `relativePath` is deliberately outside the schema — Orama preserves non-schema fields on the stored document, so the path still returns with every hit without every note sharing the token `md`, which used to make searching "md" match the whole notebook.
+
+**The retrieval ladder** widens recall only as far as it must, each rung running only if the one above found nothing:
+
+```typescript
+1. run({ threshold: 0 })   // every term, exact — typing more narrows
+2. run({})                 // any term, exact — reported as `widened`
+3. run({ tolerance: 1 })   // typo tolerance, terms >= 4 chars only
+```
+
+Applying tolerance on every pass is what made `md` match "my" and defeated the all-terms threshold: a fuzzy match always qualified, so nothing ever narrowed.
+
+**Matching is by word prefix**, defined once in `lib-isomorphic-onyvore` and shared with the webview's highlighter. When the two disagreed, searching `run` highlighted the middle of "brunch" — a match the engine never made.
+
+**Every hit is kept.** Whether a result is useful and what to display for it are different questions; conflating them discarded a note matched by its own filename for having no content snippet. Each hit reports `matchedIn` so the UI can explain why it surfaced, and falls back to a lead preview when there is no snippet.
+
+**Filter-only queries** (`is:orphan`, `links:x`, `in:folder/`) have nothing to rank, so they bypass the index, enumerate the notebook, and order by path.
+
+**Cross-notebook groups** are ordered by where the best hit matched rather than by score. BM25 depends on each index's own corpus statistics, so raw scores are not comparable between notebooks and ordering by them made group order an artifact of notebook size.
+
+### 4.3b Search Index internals (`SearchIndexService`)
 
 ```typescript
 import { create, insert, remove, search, save, load } from '@orama/orama';

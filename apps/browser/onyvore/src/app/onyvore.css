@@ -873,3 +873,61 @@ body {
   top: 0;
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
 }
+
+/* ---- search syntax help, parsed query, and match labels ---- */
+.ony-searchhelp {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+}
+
+.ony-searchhelp__row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+
+.ony-searchhelp__syntax {
+  flex: 0 0 8.5em;
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ony-searchhelp__meaning { margin: 0; }
+
+.ony-searchbar__parsed {
+  padding: 2px 8px 4px;
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ony-searchbar__notice {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-descriptionForeground));
+  background: var(--vscode-inputValidation-warningBackground, transparent);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.ony-searchbar__match-label {
+  padding: 0 8px 2px 24px;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+}
+
+.ony-searchbar__snippet--preview {
+  font-style: italic;
+  opacity: 0.85;
+}

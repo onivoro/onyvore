@@ -17,7 +17,7 @@ describe('SearchIndexService', () => {
       await svc.removeDocument(NB, 'guide.md');
 
       expect(svc.getIndexedPaths(NB)).toEqual(['tutorials/guide.md']);
-      const results = await svc.searchNotebook(NB, 'content');
+      const { hits: results } = await svc.searchNotebook(NB, ['content']);
       expect(results.map((r) => r.relativePath)).toEqual(['tutorials/guide.md']);
     });
 
@@ -31,7 +31,7 @@ describe('SearchIndexService', () => {
       await svc.removeDocument(NB, 'guide.md');
 
       expect(svc.getIndexedPaths(NB)).toEqual(['tutorials/guide.md']);
-      const results = await svc.searchNotebook(NB, 'beta');
+      const { hits: results } = await svc.searchNotebook(NB, ['beta']);
       expect(results.map((r) => r.relativePath)).toEqual(['tutorials/guide.md']);
     });
 
@@ -57,10 +57,10 @@ describe('SearchIndexService', () => {
 
       expect(svc.getIndexedPaths(NB)).toEqual(['note.md']);
 
-      const stale = await svc.searchNotebook(NB, 'original');
+      const { hits: stale } = await svc.searchNotebook(NB, ['original']);
       expect(stale).toEqual([]);
 
-      const fresh = await svc.searchNotebook(NB, 'revised');
+      const { hits: fresh } = await svc.searchNotebook(NB, ['revised']);
       expect(fresh.map((r) => r.relativePath)).toEqual(['note.md']);
     });
 
@@ -81,7 +81,7 @@ describe('SearchIndexService', () => {
       await svc.updateDocument(NB, 'new.md', 'new', 'unseen body');
 
       expect(svc.getIndexedPaths(NB)).toEqual(['new.md']);
-      const results = await svc.searchNotebook(NB, 'unseen');
+      const { hits: results } = await svc.searchNotebook(NB, ['unseen']);
       expect(results.map((r) => r.relativePath)).toEqual(['new.md']);
     });
   });
@@ -104,8 +104,8 @@ describe('SearchIndexService', () => {
       await restored.removeDocument(NB, 'a.md');
       expect(restored.getIndexedPaths(NB)).toEqual(['nested/a.md']);
 
-      const results = await restored.searchNotebook(NB, 'beta');
-      expect(results.map((r) => r.relativePath)).toEqual(['nested/a.md']);
+      const { hits } = await restored.searchNotebook(NB, ['beta']);
+      expect(hits.map((r) => r.relativePath)).toEqual(['nested/a.md']);
     });
 
     it('should reject an unreadable index format so callers can rebuild', async () => {

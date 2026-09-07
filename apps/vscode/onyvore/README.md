@@ -2,6 +2,30 @@
 
 VS Code extension host for Onyvore. This is the orchestrator — it spawns the stdio server, serves the React webview, registers command palette commands, manages file watchers, and tracks the active notebook. It does NOT run NLP, search, or link graph computation; all heavy processing is delegated to the stdio server child process.
 
+## Search syntax
+
+Everything narrows — terms, phrases, and filters all combine with AND.
+
+| Syntax | Meaning | Example |
+|---|---|---|
+| `two words` | Both must match | `sourdough starter` |
+| `"exact phrase"` | These words, in order | `"cold proof"` |
+| `-word` | Exclude | `bread -banana` |
+| `title:` | Match the title only | `title:sourdough` |
+| `path:` | Match the path only | `path:recipes` |
+| `in:folder/` | Inside a folder | `in:work/ retro` |
+| `links:note` | Notes that link to that note | `links:hotsauce` |
+| `related:note` | Notes similar to that note | `related:sourdough` |
+| `is:orphan` | Notes nothing links to | `is:orphan in:archive/` |
+
+The last three read Onyvore's link graph. `links:hotsauce` shows everything you wrote that references that note, without opening it; `is:orphan in:archive/` shows what in a folder is disconnected from everything else.
+
+**How matching works.** Words match by prefix, so `ferment` finds "fermented"; nothing matches the middle of a word. Matching is case-insensitive and there is no stemming — `jogging` will not find a note that says `jog`. If no note matches every word, the search widens to any word and says so. If nothing matches at all, a single-character typo is forgiven on words of four characters or more.
+
+Notes are found by their **filename** as well as their text, so searching `hotsauce` finds `hotsauce.md` whether or not the body says the word. Results show where the match happened.
+
+`OR`, parentheses, and regular expressions are deliberately unsupported — Onyvore lives inside VS Code, where ripgrep is a keystroke away.
+
 ## Runtime
 
 - Runs in the VS Code extension host (Node.js with access to the full `vscode` API)

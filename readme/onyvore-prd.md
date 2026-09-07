@@ -92,13 +92,81 @@ The parent notebook's file watcher, search index, and link graph skip any subdir
   * **Delete:** The file's entries are removed from `metadata.json`, `links.json`, and the search index. Dangling backlinks (edges pointing to the deleted file) are pruned from the graph.
 * **Rename Handling:** `FileSystemWatcher` emits a delete + create pair for renames. The delete path prunes old edges; the create path rebuilds them against the new filename and content. The link graph self-heals — no stable file IDs are needed. Note: this approach performs redundant work (full NLP extraction on content that hasn't changed). Optimizing rename detection (e.g., matching content hashes within a short time window to coalesce delete + create into a single rename operation) is deferred to a future iteration.
 
-### 4.3 High-Performance Search
-* **Search Engine:** Powered by **Orama**, a pure-TypeScript, in-memory search engine. Orama indexes the title (path-qualified for files in subdirectories, e.g., "work overview" for `work/overview.md`), the file path, and the full text of each note, providing broad keyword and partial-match recall. Each notebook has its own independent search index.
-* **Search Scope:** Search covers the viewed notebook by default. When a workspace has more than one notebook, a toggle widens it to all of them, with results grouped by notebook and the notebook holding the strongest match listed first.
-* **Fuzzy Matching:** Instant results for keyword and partial matches across the searched notebook(s). Search queries match against the note title, file path, and content — so searching "work overview" preferentially surfaces `work/overview.md` over `personal/overview.md`.
-* **Graph-Boosted Ranking:** Search results are boosted by link graph centrality. Notes with more inbound links rank higher, surfacing well-connected notes above isolated ones with the same keyword relevance. The formula is: `finalScore = oramaScore * (1 + log2(1 + inboundLinkCount))`. Results with zero content matches (matched only by title fuzzy matching) are filtered out.
-* **Snippet Previews:** Each search result includes **all matching text snippets** — ~120-character windows around every occurrence of the search terms in the document. Nearby matches are merged into single longer snippets. Search terms are highlighted within snippets. The match count is displayed as a badge on each result.
-* **Persistence:** All derived artifacts (`index.bin`, `links.json`, `metadata.json`) are written to disk on two triggers: after each debounced batch of incremental updates completes, and on extension deactivation (exit). This ensures a VS Code crash loses at most one debounce window (~300ms) of work. The persisted `index.bin` allows sub-100ms startup for large notebooks (10,000+ notes).
+### 4.3 Search
+
+Search is powered by **Orama**, a pure-TypeScript in-memory engine, with one index per notebook. Query semantics — parsing, filtering, ranking — sit above it.
+
+#### What is indexed
+
+| Field | Contents | Weight |
+| :--- | :--- | :--- |
+| `title` | Basename, path-qualified in subdirectories (`work overview` for `work/overview.md`) | ×4 |
+| `pathText` | Directory segments and basename, extension stripped (`work deep notes`) | ×2 |
+| `content` | The note's full text | ×1 |
+
+The raw relative path is **not** indexed. It was, and because every note's path ends in `.md`, the token `md` matched the entire notebook. The path is still stored on the document and returned with every hit; only `pathText` is searchable.
+
+#### Matching
+
+* **Prefix, not substring.** `ferment` matches "fermented"; nothing matches the middle of a word. Highlighting follows the same rule, so a highlight can never appear where the engine did not match.
+* **No stemming.** `jogging` does not find a note that says `jog`. A search that quietly matches words the user did not write is harder to trust than one that misses a plural, and prefix matching already covers the common case while typing.
+* **Case-insensitive**, including accented characters.
+
+#### The retrieval ladder
+
+Recall widens only as far as it must. Each rung runs only if the one above returned nothing:
+
+1. **All terms, exact.** Typing another word narrows the result set.
+2. **Any term, exact.** Reported to the UI as a widened search, so the change in meaning is visible rather than silent.
+3. **Typo tolerance** (one character of edit distance), for terms of at least four characters — below that, one edit reaches too much of the vocabulary. Hits from this rung are marked *approximate*.
+
+#### Query syntax
+
+Everything narrows: terms, phrases, and filters all AND together.
+
+| Syntax | Meaning |
+| :--- | :--- |
+| `two words` | Both must match |
+| `"exact phrase"` | These words, in order, adjacent. The final word must match whole — a quoted phrase is where the user asked for exactness |
+| `-word` | Exclude notes containing it |
+| `title:word` | Match the title only |
+| `path:word` | Match the path only |
+| `in:folder/` | Restrict to a folder. `in:work` matches `work/a.md`, not `workshop/b.md` |
+| `links:note` | Notes whose links point at that note |
+| `related:note` | Notes similar to that note |
+| `is:orphan` | Notes with no authored or mention links |
+
+The last three read the link graph, and are the operators no general-purpose search box can offer. `links:hotsauce` answers “what did I write that references this?” without opening the note; `is:orphan in:archive/` answers “what in here is disconnected?”.
+
+Note references in `links:` and `related:` resolve exactly as `[[wikilinks]]` do — one concept, one resolution rule.
+
+An unrecognized `word:value` is searched as literal text rather than rejected. Notes contain colons, and a search box that refuses what was typed is worse than one that searches for it.
+
+**Not supported, deliberately:** `OR`, parentheses, regular expressions, numeric or date comparisons. Each is defensible alone; together they turn a sidebar input into a query language, and the cost lands on every user who wanted to type two words. Onyvore runs inside VS Code, where ripgrep is one keystroke away.
+
+#### Filter-only queries
+
+`is:orphan`, `links:x`, and `in:folder/` on their own have nothing to rank — there is no search term to score. These bypass the index entirely, enumerate the notebook, apply the filters, and return results ordered by path.
+
+#### Ranking
+
+`finalScore = oramaScore × (1 + log2(1 + inboundLinkCount))`, so well-connected notes outrank isolated ones at equal text relevance.
+
+**Every hit is kept.** Deciding whether a result is useful and deciding what to show for it are different questions; conflating them meant a note matched by its own filename was discarded for having no content snippet. Each result reports where it matched — content, title, or path — so the UI can say why it surfaced, and a hit with no content match shows the note's opening line instead of nothing.
+
+#### Cross-notebook search
+
+Search covers the viewed notebook by default; a toggle widens it to all of them, with results grouped by notebook.
+
+Groups are ordered by **where** the best hit matched (title beats path beats content, approximate matches last), with result count breaking ties. Raw scores are not comparable across notebooks — BM25 depends on each index's own corpus statistics, so ordering groups by score made group order an artifact of notebook size.
+
+#### Snippets
+
+Each result carries every matching excerpt: ~120-character windows around each match, with nearby matches merged. Search terms are highlighted, and the match count appears as a badge.
+
+#### Persistence
+
+Derived artifacts are written after each debounced batch and on deactivation, so a crash loses at most one debounce window. The persisted `index.bin` allows sub-100ms startup for large notebooks.
 
 ### 4.4 Automatic Linking
 

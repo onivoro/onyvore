@@ -3,30 +3,66 @@ import {
   useCallback,
   useRef,
   useEffect,
+  useMemo,
   type ReactNode,
 } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useRpc, useRpcResponse } from '../hooks/use-rpc-request.hook';
 import {
   onyvoreRpcMethods,
+  parseSearchQuery,
+  describeQuery,
+  wordPrefixPattern,
+  type ParsedQuery,
   type NotebookSearchGroup,
   type NotebookSearchHit,
 } from '@onivoro/isomorphic-onyvore';
 import { searchResultsActions } from '../state/slices/search-results.slice';
 import type { RootState } from '../state/types/root-state.type';
-import { SearchIcon, FileIcon } from './Icons';
+import { SearchIcon, FileIcon, LinkIcon, QuoteIcon } from './Icons';
 import { TreeItem } from './TreeItem';
+import { SearchHelp } from './SearchHelp';
 
-function highlightSnippet(snippet: string, query: string): ReactNode[] {
-  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return [snippet];
-  const pattern = new RegExp(`(${terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
-  const parts = snippet.split(pattern);
-  return parts.map((part, i) =>
-    terms.some(t => part.toLowerCase() === t)
-      ? <mark key={i} className="ony-searchbar__highlight">{part}</mark>
-      : part
-  );
+const DEBOUNCE_MS = 150;
+
+/** Words the query will highlight — the same set the server matched on. */
+function highlightTerms(query: ParsedQuery): string[] {
+  return [
+    ...query.terms,
+    ...query.title,
+    ...query.path,
+    ...query.phrases.flatMap((phrase) => phrase.split(/\s+/).filter(Boolean)),
+  ];
+}
+
+/**
+ * Highlight matches inside a snippet.
+ *
+ * Uses the shared word-prefix rule rather than a substring scan, so a highlight
+ * can never land somewhere the search engine did not match — `run` used to
+ * light up the middle of "brunch".
+ */
+function highlightSnippet(snippet: string, terms: string[]): ReactNode[] {
+  const pattern = wordPrefixPattern(terms);
+  if (!pattern) return [snippet];
+
+  const parts: ReactNode[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(snippet)) !== null) {
+    if (match.index > last) parts.push(snippet.slice(last, match.index));
+    parts.push(
+      <mark key={match.index} className="ony-searchbar__highlight">
+        {match[0]}
+      </mark>,
+    );
+    last = match.index + match[0].length;
+    if (match[0].length === 0) pattern.lastIndex++;
+  }
+
+  if (last < snippet.length) parts.push(snippet.slice(last));
+  return parts;
 }
 
 /** One result plus the notebook it came from, so selection stays unambiguous. */
@@ -41,6 +77,15 @@ function flatten(groups: NotebookSearchGroup[]): FlatHit[] {
   );
 }
 
+/** A short label saying why a note surfaced, when it was not the body text. */
+function matchLabel(hit: NotebookSearchHit): string | null {
+  if (hit.approximate) return 'approximate match';
+  if (hit.snippets.length > 0) return null;
+  if (hit.matchedIn.includes('title')) return 'matched in title';
+  if (hit.matchedIn.includes('path')) return 'matched in path';
+  return null;
+}
+
 interface SearchBarProps {
   notebookId: string | null;
 }
@@ -50,18 +95,24 @@ export function SearchBar({ notebookId }: SearchBarProps) {
   const dispatch = useDispatch();
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [query, setQuery] = useState('');
   const [groups, setGroups] = useState<NotebookSearchGroup[]>([]);
+  const [widened, setWidened] = useState(false);
   const [selected, setSelected] = useState(0);
   const [allNotebooks, setAllNotebooks] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [requestId, setRequestId] = useState<string | null>(null);
   const response = useRpcResponse(requestId);
 
   const notebooks = useSelector((state: RootState) => state.notebooks.notebooks);
   const hits = flatten(groups);
 
-  // `Onyvore: Search Notebook` sets this so the command actually focuses the box.
+  const parsed = useMemo(() => parseSearchQuery(query), [query]);
+  const terms = useMemo(() => highlightTerms(parsed), [parsed]);
+  const description = useMemo(() => describeQuery(parsed), [parsed]);
+
   const showRequested = useSelector(
     (state: RootState) => state.searchResults.visible,
   );
@@ -76,18 +127,19 @@ export function SearchBar({ notebookId }: SearchBarProps) {
   useEffect(() => {
     if (!response?.result) return;
     const data = response.result as
-      | { results: NotebookSearchHit[] }
-      | { groups: NotebookSearchGroup[] };
+      | { hits: NotebookSearchHit[]; widened: boolean }
+      | { groups: NotebookSearchGroup[]; widened: boolean };
 
     if ('groups' in data) {
       setGroups(data.groups ?? []);
     } else {
       setGroups(
-        data.results?.length && notebookId
-          ? [{ notebookId, notebookName: '', results: data.results }]
+        data.hits?.length && notebookId
+          ? [{ notebookId, notebookName: '', results: data.hits, topScore: 0 }]
           : [],
       );
     }
+    setWidened(Boolean(data.widened));
     setSelected(0);
     setRequestId(null);
   }, [response]);
@@ -95,6 +147,7 @@ export function SearchBar({ notebookId }: SearchBarProps) {
   const clear = useCallback(() => {
     setQuery('');
     setGroups([]);
+    setWidened(false);
     setSelected(0);
   }, []);
 
@@ -103,6 +156,7 @@ export function SearchBar({ notebookId }: SearchBarProps) {
       setSelected(0);
       if (searchQuery.trim().length === 0 || (!searchAll && !notebookId)) {
         setGroups([]);
+        setWidened(false);
         return;
       }
       setRequestId(
@@ -122,12 +176,31 @@ export function SearchBar({ notebookId }: SearchBarProps) {
     [notebookId, sendRequest],
   );
 
+  // Coalesce keystrokes: one search per pause, not one per character.
+  const scheduleSearch = useCallback(
+    (searchQuery: string, searchAll: boolean) => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(
+        () => runSearch(searchQuery, searchAll),
+        DEBOUNCE_MS,
+      );
+    },
+    [runSearch],
+  );
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
   const handleSearch = useCallback(
     (searchQuery: string) => {
       setQuery(searchQuery);
-      runSearch(searchQuery, allNotebooks);
+      scheduleSearch(searchQuery, allNotebooks);
     },
-    [runSearch, allNotebooks],
+    [scheduleSearch, allNotebooks],
   );
 
   const toggleScope = useCallback(() => {
@@ -147,7 +220,6 @@ export function SearchBar({ notebookId }: SearchBarProps) {
     [sendRequest, clear],
   );
 
-  // Keep the highlighted result in view while arrowing through a long list.
   useEffect(() => {
     resultsRef.current
       ?.querySelector('[data-selected="true"]')
@@ -210,7 +282,32 @@ export function SearchBar({ notebookId }: SearchBarProps) {
             All
           </button>
         )}
+        <button
+          type="button"
+          className={`ony-searchbar__scope${showHelp ? ' ony-searchbar__scope--on' : ''}`}
+          title="Search syntax"
+          aria-label="Search syntax"
+          aria-pressed={showHelp}
+          onClick={() => setShowHelp((open) => !open)}
+        >
+          ?
+        </button>
       </div>
+
+      {showHelp && <SearchHelp />}
+
+      {/* Reading the query back is both documentation and confirmation that
+          what was typed is what will run. */}
+      {description && !showHelp && (
+        <div className="ony-searchbar__parsed">{description}</div>
+      )}
+
+      {widened && (
+        <div className="ony-searchbar__notice">
+          No note matched every word — showing notes matching any of them.
+        </div>
+      )}
+
       {groups.length > 0 && (
         <div className="ony-searchbar__results" ref={resultsRef}>
           {groups.map((group) => (
@@ -224,6 +321,15 @@ export function SearchBar({ notebookId }: SearchBarProps) {
                 flatIndex++;
                 const index = flatIndex;
                 const open = () => openResult(group.notebookId, result.relativePath);
+                const label = matchLabel(result);
+                const icon = result.matchedIn.includes('content') ? (
+                  <FileIcon />
+                ) : result.matchedIn.includes('title') ? (
+                  <QuoteIcon />
+                ) : (
+                  <LinkIcon />
+                );
+
                 return (
                   <div
                     key={`${group.notebookId}:${result.relativePath}`}
@@ -233,17 +339,28 @@ export function SearchBar({ notebookId }: SearchBarProps) {
                       <TreeItem
                         label={result.title}
                         sublabel={result.relativePath}
-                        icon={<FileIcon />}
-                        badge={result.snippets.length}
+                        icon={icon}
+                        badge={
+                          result.snippets.length > 0 ? result.snippets.length : undefined
+                        }
                         selected={index === selected}
                         onClick={open}
                       />
                     </ul>
+                    {label && <div className="ony-searchbar__match-label">{label}</div>}
                     {result.snippets.map((snippet, i) => (
                       <div key={i} className="ony-searchbar__snippet" onClick={open}>
-                        {highlightSnippet(snippet, query)}
+                        {highlightSnippet(snippet, terms)}
                       </div>
                     ))}
+                    {result.snippets.length === 0 && result.preview && (
+                      <div
+                        className="ony-searchbar__snippet ony-searchbar__snippet--preview"
+                        onClick={open}
+                      >
+                        {result.preview}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -251,7 +368,8 @@ export function SearchBar({ notebookId }: SearchBarProps) {
           ))}
         </div>
       )}
-      {query.length > 0 && hits.length === 0 && (
+
+      {query.trim().length > 0 && hits.length === 0 && !requestId && (
         <div className="ony-searchbar__empty">No results found</div>
       )}
     </>
